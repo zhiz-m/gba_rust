@@ -107,6 +107,19 @@ impl Cpu{
                 increment_pc = false;
                 self.execute_branch_exchange()
             }
+            // load and store instructions
+            // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
+            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
+                self.execute_swp(bus)
+            }
+            else if (self.instr >> 26) & 0b11 == 1 {
+                self.execute_ldr_str(bus)
+            }
+            else if (self.instr >> 25) & 0b111 == 0 && 
+                ((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
+                ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1) {
+                self.execute_halfword_signed_transfer(bus)
+            }
             // msr and mrs
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
                 self.execute_mrs_psr2reg()
@@ -401,14 +414,32 @@ impl Cpu{
     }
     // ---------- MRS and MSR
     fn execute_mrs_psr2reg(&mut self) -> u32 {
+        let reg = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
+        let res = self.reg[reg as usize];
+        self.reg_dest = (self.instr >> 12) & 0b1111;
+        self.set_reg(self.reg_dest, res);
         1
     }
 
+    // NOTE: inconsistencies between ARM7TDMI_data_sheet.pdf and cpu_technical_spec_long.pdf regarding MSR. 
+    // ARM7TDMI_data_sheet.pdf was chosen as the source of truth. TODO: check if this is the correct choice. 
     fn execute_msr_reg2psr(&mut self) -> u32 {
+        let reg_dest = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
+        let res = self.read_reg(self.instr & 0b1111);
+        self.reg[reg_dest as usize] = res;
         1
     }
 
     fn execute_msr_reg_imm2psr(&mut self) -> u32 {
+        let reg_dest = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
+        let res = if (self.instr >> 25) & 1 == 0 { // register
+            self.read_reg(self.instr & 0b1111)
+        }
+        else{ // immediate
+            self.process_immediate_rotate();
+            self.operand2
+        };
+        self.reg[reg_dest as usize] = res;
         1
     }
 
@@ -508,6 +539,186 @@ impl Cpu{
         cur_cycles
     }
 
+    // ---------- data transfers
+    fn execute_ldr_str(&mut self, bus: &mut Bus) -> u32 {
+        let mut cycles = 0;
+        // I flag
+        let offset = if (self.instr >> 25) & 1 > 0 {
+            // NOTE: double check if cycles are added here
+            //cycles += 
+            self.process_reg_rotate();
+            self.operand2
+        }
+        else{
+            self.instr & 0b111111111111
+        };
+        // base reg
+        let base_reg = (self.instr >> 16) & 0b1111;
+        let mut addr =  self.read_reg(base_reg);
+
+        // U flag
+        let offset_addr = if (self.instr >> 23) & 1 == 0{
+            addr - offset
+        }
+        else{
+            addr + offset
+        };
+
+        // P flag
+        if (self.instr >> 24) == 1{
+            addr = offset_addr;
+        }
+
+        let addr = addr as usize;
+
+        let L = (self.instr >> 20) & 1 == 1;
+        let B = (self.instr >> 22) & 1 == 1;
+
+        let reg = (self.instr >> 12) & 0b1111;
+
+        match (L,B) {
+            // register -> memory, byte
+            (false, true) => {
+                bus.store_byte(addr, (self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0}) as u8);
+                cycles += 2;
+            },
+            // register -> memory, word
+            (false, false) => {
+                let res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
+                if (addr & 1) == 1{
+                    bus.store_byte(addr, res as u8);
+                    bus.store_byte(addr + 1, (res >> 8) as u8);
+                    bus.store_byte(addr + 2, (res >> 16) as u8);
+                    bus.store_byte(addr + 3, (res >> 24) as u8);
+                }
+                else if (addr & 0b10) > 0 {
+                    bus.store_halfword(addr, res as u16);
+                    bus.store_halfword(addr + 2, (res >> 16) as u16);
+                }
+                else{
+                    bus.store_word(addr, res);
+                }
+                cycles += 2;
+            },
+            // memory -> register, byte
+            (true, true) => {
+                let res = bus.read_byte(addr);
+                self.set_reg(reg, res as u32);
+                cycles += 3;
+            },
+            // memory -> register, word
+            (true, false) => {
+                if (addr & 0b10) > 0 {
+                    let hi = bus.read_halfword(addr) as u32;
+                    let lo = bus.read_halfword(addr + 2) as u32;
+                    self.set_reg(reg, lo + (hi << 16));
+                }
+                else{
+                    let res = bus.read_word(addr);
+                    self.set_reg(reg, res);
+                }
+                cycles += 3;
+            },
+        };
+
+        // W flag
+        if (self.instr >> 21) == 1 {
+            self.set_reg(base_reg, offset_addr);
+        };
+
+        if L && reg == Register::R15 as u32 {
+            cycles += 2;
+        }
+
+        cycles
+    }
+
+    fn execute_halfword_signed_transfer(&mut self, bus: &mut Bus) -> u32 {
+        let mut cycles = 0;
+        let offset = if (self.instr >> 22) & 1 == 0 {
+            self.read_reg(self.instr & 0b1111)
+        }
+        else{
+            let hi = (self.instr >> 8) & 0b1111;
+            let lo = self.instr & 0b1111;
+            lo + hi << 4
+        };
+        // base reg
+        let base_reg = (self.instr >> 16) & 0b1111;
+        let mut addr =  self.read_reg(base_reg);
+
+        // U flag
+        let offset_addr = if (self.instr >> 23) & 1 == 0{
+            addr - offset
+        }
+        else{
+            addr + offset
+        };
+
+        // P flag
+        if (self.instr >> 24) == 1{
+            addr = offset_addr;
+        }
+
+        let addr = addr as usize;
+
+        let L = (self.instr >> 20) & 1 == 1;
+        let S = (self.instr >> 6) & 1 == 1;
+        let H = (self.instr >> 5) & 1 == 1;
+
+        let reg = (self.instr >> 12) & 0b1111;
+
+        match (L,S,H) {
+            // register -> memory, byte (STRH)
+            (false, false, true) => {
+                let res = self.read_reg(reg);
+                bus.store_halfword(addr, res as u16);
+            },
+            // LDRH
+            (true, false, true) => {
+                self.set_reg(reg, bus.read_halfword(addr) as u32);
+            },
+            // LDRSH
+            (true, true, true) => {
+                let mut res = bus.read_halfword(addr) as u32;
+                if (res >> 15) & 1 > 0{
+                    res |= ((1<<16) - 1) << 16;
+                }
+                self.set_reg(reg, res);
+            },
+            // LDRSB
+            (true, true, false) => {
+                let mut res = bus.read_byte(addr) as u32;
+                if (res >> 7) & 1 > 0{
+                    res |= ((1<<24) - 1) << 8;
+                }
+                self.set_reg(reg, res);
+            },
+            _ => {
+                panic!("Error undefined combination in execute_halfword_signed_transfer with instr {:#034b} at pc {}\n", self.instr, self.actual_pc);
+            }
+        };
+
+        // W flag
+        if (self.instr >> 21) == 1 {
+            self.set_reg(base_reg, offset_addr);
+        };
+
+        if (L,S,H) == (false, false, true) {
+            2
+        }
+        else if reg == Register::R15 as u32 {
+            5
+        }
+        else {
+            3
+        }
+    }
+
+    fn execute_swp(&mut self, bus: &mut Bus) -> u32 {
+        0
+    }
+
     // ---------- miscellaneous helpers
 
     fn check_cond(&self) -> bool{
@@ -536,20 +747,18 @@ impl Cpu{
         (self.instr >> 20) & 1 > 0
     }
 
-    // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
-    fn process_operand2(&mut self) -> u32 {
-        self.shifter_carry = self.read_flag(Flag::C) as u32;
-        let is_immediate = (self.instr >> 24) & 1 != 0;
-        // immediate value is used
-        if is_immediate {
-            let cur = (self.instr & 0b11111111) << 24;
-            let rotate = (self.instr & 0b111100000000) * 2;
-            if rotate > 0{
-                self.shifter_carry = (self.instr >> (rotate-1)) & 1;
-            }
-            self.operand2 = cur.rotate_right(rotate);
-            return 0;
-        };
+    // modifies self.operand2. returns number of extra cycles (0)
+    fn process_immediate_rotate(&mut self) -> u32 {
+        let cur = (self.instr & 0b11111111) << 24;
+        let rotate = ((self.instr >> 8) & 0b1111) * 2;
+        if rotate > 0{
+            self.shifter_carry = (self.instr >> (rotate-1)) & 1;
+        }
+        self.operand2 = cur.rotate_right(rotate);
+        0
+    }
+
+    fn process_reg_rotate(&mut self) -> u32 {
         // register is used
         let reg = &self.reg_map.get(&self.op_mode).unwrap()[self.instr as usize & 0b1111];
         let cur = self.reg[*reg as usize];
@@ -628,6 +837,19 @@ impl Cpu{
         }
 
         return !is_immediate as u32;
+    }
+
+    // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
+    fn process_operand2(&mut self) -> u32 {
+        self.shifter_carry = self.read_flag(Flag::C) as u32;
+        let is_immediate = (self.instr >> 24) & 1 != 0;
+        // immediate value is used
+        if is_immediate {
+            self.process_immediate_rotate()
+        }
+        else{
+            self.process_reg_rotate()
+        }
     }
 
     fn process_operand1(&mut self) -> u32 {
