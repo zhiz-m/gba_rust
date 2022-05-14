@@ -21,6 +21,7 @@ enum OperatingMode{
     Und
 }
 
+#[derive(PartialEq)]
 enum InstructionSet {
     Arm,
     Thumb
@@ -48,7 +49,8 @@ pub struct Cpu{
     instr_set: InstructionSet,
     op_mode: OperatingMode, 
     
-    reg_map: HashMap<OperatingMode, [Register; 16]>
+    reg_map: HashMap<OperatingMode, [Register; 16]>,
+    spsr_map: HashMap<OperatingMode, Register>,
 }
 
 impl Cpu{
@@ -72,135 +74,133 @@ impl Cpu{
                 (OperatingMode::Abt, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_abt, Register::R14_abt, Register::R15]),
                 (OperatingMode::Irq, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_irq, Register::R14_irq, Register::R15]),
                 (OperatingMode::Und, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_und, Register::R14_und, Register::R15]),
-            ])
+            ]),
+            spsr_map: HashMap::from([
+                (OperatingMode::Fiq, Register::SPSR_fiq),
+                (OperatingMode::Svc, Register::SPSR_svc),
+                (OperatingMode::Abt, Register::SPSR_abt),
+                (OperatingMode::Irq, Register::SPSR_irq),
+                (OperatingMode::Und, Register::SPSR_und),
+            ]),
         }
     }
 
-    pub fn check_cond(&self) -> bool{
-        let cond = self.instr >> 28;
-        match cond {
-            0b0000 => self.read_flag(Flag::Z),
-            0b0001 => !self.read_flag(Flag::Z),
-            0b0010 => self.read_flag(Flag::C),
-            0b0011 => !self.read_flag(Flag::C),
-            0b0100 => self.read_flag(Flag::N),
-            0b0101 => !self.read_flag(Flag::N),
-            0b0110 => self.read_flag(Flag::V),
-            0b0111 => !self.read_flag(Flag::V),
-            0b1000 => self.read_flag(Flag::C) && !self.read_flag(Flag::Z),
-            0b1001 => !self.read_flag(Flag::C) || self.read_flag(Flag::Z),
-            0b1010 => self.read_flag(Flag::N) == !self.read_flag(Flag::V),
-            0b1011 => self.read_flag(Flag::N) != self.read_flag(Flag::V),
-            0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == !self.read_flag(Flag::V)),
-            0b1101 => self.read_flag(Flag::Z) || (self.read_flag(Flag::N) != self.read_flag(Flag::V)),
-            0b1110 => true,
-            _ => panic!("cond field not valid")
-        }
-    }
+    // ---------- main loop (clock)
 
-    // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
-    fn process_operand2(&mut self) -> u32 {
-        self.shifter_carry = self.read_flag(Flag::C) as u32;
-        let is_immediate = (self.instr >> 24) & 1 != 0;
-        // immediate value is used
-        if is_immediate {
-            let cur = (self.instr & 0b11111111) << 24;
-            let rotate = (self.instr & 0b111100000000) * 2;
-            if rotate > 0{
-                self.shifter_carry = (self.instr >> (rotate-1)) & 1;
-            }
-            self.operand2 = cur.rotate_right(rotate);
-            return 0;
+    pub fn clock(&mut self, bus: &mut Bus) {
+        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
+        let aligned_pc = match self.instr_set {
+            InstructionSet::Arm => self.actual_pc & !11,
+            InstructionSet::Thumb => self.actual_pc &!1, 
         };
-        // register is used
-        let reg = &self.reg_map.get(&self.op_mode).unwrap()[self.instr as usize & 0b1111];
-        let cur = self.reg[*reg as usize];
-        let mut shift_amount: u32; 
+        self.instr = bus.read_word(aligned_pc as usize);
+        self.set_pc(self.actual_pc + 8);
 
-        let is_immediate = (self.instr >> 4) & 1 == 0;
-        // the shift amount is a literal; ie not a register
-        if is_immediate {
-            shift_amount = (self.instr >> 7) & 0b11111;
-        }
-        // the shift amount is stored in the lowest byte in a register
-        else{
-            let reg = (self.instr >> 8) & 0b1111;
-            let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
-            shift_amount = self.reg[*reg as usize] & 0b11111111;
-        }
+        let mut cur_cycles = 0;
+        
+        let mut increment_pc = true;
 
-        let shift_type = (self.instr >> 5) & 0b11;
-        match shift_type{
-            // logical left
-            0b00 => {
-                if shift_amount > 32 {
-                    self.operand2 = 0;
-                    self.shifter_carry = 0;
-                }
-                else{
-                    self.operand2 = cur << shift_amount;
-                    if shift_amount > 0{
-                        self.shifter_carry = (cur >> (32 - shift_amount)) & 1;
+        if self.check_cond() {
+            cur_cycles +=
+            // branch and exchange shares 0b000 with execute_dataproc. 
+            if (self.instr << 4) >> 8 == 0b000100101111111111110001{
+                increment_pc = false;
+                self.execute_branch_exchange()
+            }
+            // msr and mrs
+            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
+                self.execute_mrs_psr2reg()
+            } 
+            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
+                self.execute_msr_reg2psr()
+            } 
+            else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
+                self.execute_msr_reg2psr()
+            } 
+            // multiply and multiply_long share 0b000 with execute_dataproc. 
+            else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
+                self.execute_multiply()
+            }
+            else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
+                self.execute_multiply_long()
+            }
+            else{
+                match (self.instr >> 24) & 0b111 {
+                    0b000 | 0b001 => self.execute_dataproc(),
+                    0b101 => {
+                        increment_pc = false;
+                        self.execute_branch()
+                    },
+                    _ => {
+                        print!("Error undefined instruction {:#034b} at pc {}\n", self.instr, self.actual_pc);
+                        0
                     }
                 }
-            },
-            0b01 => {
-                if shift_amount == 0 {
-                    shift_amount = 32;
-                }
-                if shift_amount > 32 {
-                    self.operand2 = 0;
-                    self.shifter_carry = 0;
-                }
-                else{
-                    self.operand2 = cur >> shift_amount;
-                    if shift_amount > 0{
-                        self.shifter_carry = (cur >> (shift_amount-1)) & 1;
-                    }
-                }
-            },
-            0b10 => {
-                {
-                    if shift_amount == 0 {
-                        shift_amount = 32;
-                    }
-                    shift_amount = min(shift_amount, 32);
-                    
-                    self.operand2 = cur >> shift_amount;
-                    if shift_amount > 0 {
-                        self.shifter_carry = (cur >> (shift_amount-1)) & 1;
-                    }
-                    
-                    if cur >> 31 & 1 > 0 {
-                        self.operand2 |= (0xffffffff >> (32 - shift_amount)) << (32 - shift_amount);
-                    }
-                }
-            },
-            0b11 => {
-                if shift_amount > 0{
-                    self.shifter_carry = (self.instr >> (shift_amount % 32-1)) & 1;
-                    self.operand2 = cur.rotate_right(shift_amount);
-                }
-                else{
-                    self.shifter_carry = self.instr & 1;
-                    self.operand2 = (cur >> 1) | ((self.read_flag(Flag::C) as u32) << 31)
-                }
-            },
-            _ => {}
+            }
         }
 
-        return !is_immediate as u32;
+        if increment_pc {
+            self.actual_pc += match self.instr_set {
+                InstructionSet::Arm => 0b100,
+                InstructionSet::Thumb => 0b010,
+            }
+        }
     }
 
-    fn process_operand1(&mut self) -> u32 {
-        let reg = (self.instr >> 16) & 0b1111;
-        self.operand1 = self.read_reg(reg);
-        0
+    // ---------- branches
+    fn execute_branch(&mut self) -> u32 {
+        // link bit set
+        if (self.instr >> 24) & 1 == 1 {
+            self.reg[Register::R14 as usize] = self.actual_pc + 4;
+        }
+        let mut offset = (self.instr << 10) >> 8;
+        if (offset >> 25) & 1 == 1 {
+            offset |= 0b111111 << 26;
+        }
+        self.actual_pc = self.read_pc() + offset;
+        3
     }
 
-    fn process_reg_dest(&mut self) -> u32 {
-        self.reg_dest = (self.instr >> 12) & 0b1111;
-        0
+    fn execute_branch_exchange(&mut self) -> u32 {
+        assert!(self.instr_set == InstructionSet::Arm);
+        let addr = self.read_reg(self.instr & 0b1111);
+        if addr & 1 > 0 {
+            self.instr_set = InstructionSet::Thumb;
+        };
+        self.actual_pc = addr;
+        3
+    }
+
+    // ---------- data processing
+
+    // returns number of clock cycles
+    fn execute_dataproc(&mut self) -> u32 {
+        let mut cur_cycles = self.process_reg_dest() + self.process_operand1() + self.process_operand2();
+
+        cur_cycles += match (self.instr >> 21) & 0b1111 {
+            0b0000 => self.op_and(),
+            0b0001 => self.op_eor(),
+            0b0010 => self.op_sub(),
+            0b0011 => self.op_rsb(),
+            0b0100 => self.op_add(),
+            0b0101 => self.op_adc(),
+            0b0110 => self.op_sbc(),
+            0b0111 => self.op_rsc(),
+            0b1000 => self.op_tst(),
+            0b1001 => self.op_teq(),
+            0b1010 => self.op_cmp(),
+            0b1011 => self.op_cmn(),
+            0b1100 => self.op_orr(),
+            0b1101 => self.op_mov(),
+            0b1110 => self.op_bic(),
+            0b1111 => self.op_mvn(),
+            _ => {
+                print!("Error undefined instruction {:#034b} at pc {}, data processing opcode unknown\n", self.instr, self.actual_pc);
+                0
+            }
+        };
+
+        cur_cycles
     }
 
     //TODO: note copy to CPSR when dest is R15
@@ -399,76 +399,272 @@ impl Cpu{
         }
         0
     }
-
-    pub fn clock(&mut self, bus: &mut Bus) {
-        self.instr = bus.read_word(self.actual_pc as usize);
-        self.set_pc(self.actual_pc + 8);
-        
-        let cur_cycles = match (self.instr >> 24) & 0b111 {
-            0b000 => self.execute_dataproc(),
-            _ => {
-                print!("Error undefined instruction {:#034b} at pc {}\n", self.instr, self.actual_pc);
-                0
-            }
-        };
+    // ---------- MRS and MSR
+    fn execute_mrs_psr2reg(&mut self) -> u32 {
+        1
     }
 
-    // returns number of clock cycles
-    pub fn execute_dataproc(&mut self) -> u32 {
-        let mut cur_cycles = self.process_reg_dest() + self.process_operand1() + self.process_operand2();
+    fn execute_msr_reg2psr(&mut self) -> u32 {
+        1
+    }
 
-        cur_cycles += match (self.instr >> 21) & 0b1111 {
-            0b0000 => self.op_and(),
-            0b0001 => self.op_eor(),
-            0b0010 => self.op_sub(),
-            0b0011 => self.op_rsb(),
-            0b0100 => self.op_add(),
-            0b0101 => self.op_adc(),
-            0b0110 => self.op_sbc(),
-            0b0111 => self.op_rsc(),
-            0b1000 => self.op_tst(),
-            0b1001 => self.op_teq(),
-            0b1010 => self.op_cmp(),
-            0b1011 => self.op_cmn(),
-            0b1100 => self.op_orr(),
-            0b1101 => self.op_mov(),
-            0b1110 => self.op_bic(),
-            0b1111 => self.op_mvn(),
-            _ => {
-                print!("Error undefined instruction {:#034b} at pc {}, data processing opcode unknown\n", self.instr, self.actual_pc);
-                0
-            }
+    fn execute_msr_reg_imm2psr(&mut self) -> u32 {
+        1
+    }
+
+    // ---------- multiplications
+    fn execute_multiply(&mut self) -> u32 {
+        self.reg_dest = (self.instr >> 16) & 0b1111;
+        self.operand1 = self.read_reg((self.instr >> 12) & 0b1111);
+        self.operand2 = self.read_reg((self.instr >> 8) & 0b1111);
+        let operand3 = self.read_reg((self.instr) & 0b1111);
+
+        let mut cur_cycles;
+
+        let res = if (self.instr >> 21) & 1 > 0 {
+            cur_cycles = 2;
+            operand3 * self.operand2 + self.operand1
+        }
+        else {
+            cur_cycles = 1;
+            operand3 * self.operand2
+        };
+
+        self.set_reg(self.reg_dest, res);
+
+        if (self.instr >> 20) & 1 == 1{
+            self.set_flag(Flag::N, res >> 31 > 0);
+            self.set_flag(Flag::Z, res == 0);
+        }
+
+        cur_cycles += 
+        if self.operand2 >> 8 == 0 || self.operand2 >> 8 == (1 << 24) - 1{
+            1
+        }
+        else if self.operand2 >> 16 == 0 || self.operand2 >> 16 == (1 << 16) - 1{
+            2
+        }
+        else if self.operand2 >> 24 == 0 || self.operand2 >> 24 == (1 << 8) - 1{
+            3
+        }
+        else{
+            4
         };
 
         cur_cycles
+    }
+
+    fn execute_multiply_long(&mut self) -> u32{
+        let reg_dest_hi = (self.instr >> 16) & 0b1111;
+        let reg_dest_lo = (self.instr >> 12) & 0b1111;
+        let operand2 = self.read_reg((self.instr >> 8) & 0b1111);
+        let operand3 = self.read_reg((self.instr) & 0b1111);
+        let operand1 = (self.read_reg(reg_dest_hi) as u64) << 32 + self.read_reg(reg_dest_lo);
+
+        let mut cur_cycles;
+        let unsigned = (self.instr >> 22) & 1 == 0;
+
+        let res = if (self.instr >> 21) & 1 > 0 {
+            cur_cycles = 2;
+            if unsigned{
+                operand1 + operand3 as u64 * operand2 as u64
+            }
+            else{
+                (operand1 as i64 + operand3 as i64 * operand2 as i64) as u64
+            }
+        }
+        else {
+            cur_cycles = 1;
+            if unsigned{
+                operand3 as u64 * operand2 as u64
+            }
+            else{
+                (operand3 as i64 * operand2 as i64) as u64
+            }
+        };
+
+        self.set_reg(reg_dest_hi, (res >> 32) as u32);
+        self.set_reg(reg_dest_lo, res as u32);
+
+        if (self.instr >> 20) & 1 == 1{
+            self.set_flag(Flag::N, res >> 63 > 0);
+            self.set_flag(Flag::Z, res == 0);
+        }
+
+        cur_cycles += 
+        if operand2 >> 8 == 0 || (!unsigned && operand2 >> 8 == (1 << 24) - 1){
+            1
+        }
+        else if operand2 >> 16 == 0 || (!unsigned && operand2 >> 16 == (1 << 16) - 1){
+            2
+        }
+        else if operand2 >> 24 == 0 || (!unsigned && operand2 >> 24 == (1 << 8) - 1){
+            3
+        }
+        else{
+            4
+        };
+
+        cur_cycles
+    }
+
+    // ---------- miscellaneous helpers
+
+    fn check_cond(&self) -> bool{
+        let cond = self.instr >> 28;
+        match cond {
+            0b0000 => self.read_flag(Flag::Z),
+            0b0001 => !self.read_flag(Flag::Z),
+            0b0010 => self.read_flag(Flag::C),
+            0b0011 => !self.read_flag(Flag::C),
+            0b0100 => self.read_flag(Flag::N),
+            0b0101 => !self.read_flag(Flag::N),
+            0b0110 => self.read_flag(Flag::V),
+            0b0111 => !self.read_flag(Flag::V),
+            0b1000 => self.read_flag(Flag::C) && !self.read_flag(Flag::Z),
+            0b1001 => !self.read_flag(Flag::C) || self.read_flag(Flag::Z),
+            0b1010 => self.read_flag(Flag::N) == !self.read_flag(Flag::V),
+            0b1011 => self.read_flag(Flag::N) != self.read_flag(Flag::V),
+            0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == !self.read_flag(Flag::V)),
+            0b1101 => self.read_flag(Flag::Z) || (self.read_flag(Flag::N) != self.read_flag(Flag::V)),
+            0b1110 => true,
+            _ => panic!("cond field not valid")
+        }
     }
 
     fn dataproc_set_cond(&self) -> bool{
         (self.instr >> 20) & 1 > 0
     }
 
-    pub fn read_pc(&self) -> u32 {
+    // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
+    fn process_operand2(&mut self) -> u32 {
+        self.shifter_carry = self.read_flag(Flag::C) as u32;
+        let is_immediate = (self.instr >> 24) & 1 != 0;
+        // immediate value is used
+        if is_immediate {
+            let cur = (self.instr & 0b11111111) << 24;
+            let rotate = (self.instr & 0b111100000000) * 2;
+            if rotate > 0{
+                self.shifter_carry = (self.instr >> (rotate-1)) & 1;
+            }
+            self.operand2 = cur.rotate_right(rotate);
+            return 0;
+        };
+        // register is used
+        let reg = &self.reg_map.get(&self.op_mode).unwrap()[self.instr as usize & 0b1111];
+        let cur = self.reg[*reg as usize];
+        let mut shift_amount: u32; 
+
+        let is_immediate = (self.instr >> 4) & 1 == 0;
+        // the shift amount is a literal; ie not a register
+        if is_immediate {
+            shift_amount = (self.instr >> 7) & 0b11111;
+        }
+        // the shift amount is stored in the lowest byte in a register
+        else{
+            let reg = (self.instr >> 8) & 0b1111;
+            let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
+            shift_amount = self.reg[*reg as usize] & 0b11111111;
+        }
+
+        let shift_type = (self.instr >> 5) & 0b11;
+        match shift_type{
+            // logical left
+            0b00 => {
+                if shift_amount > 32 {
+                    self.operand2 = 0;
+                    self.shifter_carry = 0;
+                }
+                else{
+                    self.operand2 = cur << shift_amount;
+                    if shift_amount > 0{
+                        self.shifter_carry = (cur >> (32 - shift_amount)) & 1;
+                    }
+                }
+            },
+            0b01 => {
+                if shift_amount == 0 {
+                    shift_amount = 32;
+                }
+                if shift_amount > 32 {
+                    self.operand2 = 0;
+                    self.shifter_carry = 0;
+                }
+                else{
+                    self.operand2 = cur >> shift_amount;
+                    if shift_amount > 0{
+                        self.shifter_carry = (cur >> (shift_amount-1)) & 1;
+                    }
+                }
+            },
+            0b10 => {
+                {
+                    if shift_amount == 0 {
+                        shift_amount = 32;
+                    }
+                    shift_amount = min(shift_amount, 32);
+                    
+                    self.operand2 = cur >> shift_amount;
+                    if shift_amount > 0 {
+                        self.shifter_carry = (cur >> (shift_amount-1)) & 1;
+                    }
+                    
+                    if cur >> 31 & 1 > 0 {
+                        self.operand2 |= (0xffffffff >> (32 - shift_amount)) << (32 - shift_amount);
+                    }
+                }
+            },
+            0b11 => {
+                if shift_amount > 0{
+                    self.shifter_carry = (self.instr >> (shift_amount % 32-1)) & 1;
+                    self.operand2 = cur.rotate_right(shift_amount);
+                }
+                else{
+                    self.shifter_carry = self.instr & 1;
+                    self.operand2 = (cur >> 1) | ((self.read_flag(Flag::C) as u32) << 31)
+                }
+            },
+            _ => {}
+        }
+
+        return !is_immediate as u32;
+    }
+
+    fn process_operand1(&mut self) -> u32 {
+        let reg = (self.instr >> 16) & 0b1111;
+        self.operand1 = self.read_reg(reg);
+        0
+    }
+
+    fn process_reg_dest(&mut self) -> u32 {
+        self.reg_dest = (self.instr >> 12) & 0b1111;
+        0
+    }
+
+    // ---------- read and set helpers
+
+    fn read_pc(&self) -> u32 {
         self.reg[Register::R15 as usize]
     }
 
-    pub fn set_pc(&mut self, pc: u32){
+    fn set_pc(&mut self, pc: u32){
         self.reg[Register::R15 as usize] = pc;
     }
 
-    pub fn read_sp(&self) -> u32 {
+    fn read_sp(&self) -> u32 {
         self.reg[Register::R14 as usize]
     }
 
-    pub fn set_sp(&mut self, sp: u32){
+    fn set_sp(&mut self, sp: u32){
         self.reg[Register::R14 as usize] = sp;
     }
 
-    pub fn read_flag(&self, f: Flag) -> bool {
+    fn read_flag(&self, f: Flag) -> bool {
         let s = f as u32;
         (self.reg[Register::CPSR as usize] << s) != 0
     }
 
-    pub fn set_flag(&mut self, f: Flag, val: bool) {
+    fn set_flag(&mut self, f: Flag, val: bool) {
         let s = f as u32;
         self.reg[Register::CPSR as usize] |= (val as u32) << s;
     }

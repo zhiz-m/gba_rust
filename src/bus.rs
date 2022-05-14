@@ -1,11 +1,11 @@
 pub struct Bus{
-    mem: [u8; 268435456]
+    mem: Vec<u8>
 }
 
 impl Bus {
     pub fn new() -> Bus{
         Bus { 
-            mem: [0; 268435456]
+            mem: vec![0; 268435456]
         }
     }
 
