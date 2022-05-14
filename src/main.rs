@@ -1,5 +1,10 @@
+mod bus;
 mod cpu;
 
+use bus::Bus;
+use cpu::Cpu;
+
 fn main() {
-    println!("Hello, world!");
+    let bus = Bus::new();
+    let cpu = Cpu::new(); 
 }
