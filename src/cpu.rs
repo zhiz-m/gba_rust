@@ -10,7 +10,7 @@ enum Register{
     SPSR_fiq, SPSR_svc, SPSR_abt, SPSR_irq, SPSR_und
 }
 
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy)]
 enum OperatingMode{
     Usr,
     Fiq, 
@@ -37,7 +37,7 @@ enum Flag{
     T = 5,
 }
 
-pub struct Cpu{
+pub struct CPU{
     reg: [u32; 37],
     instr: u32,
     shifter_carry: u32, // 0 or 1 only
@@ -51,11 +51,14 @@ pub struct Cpu{
     
     reg_map: HashMap<OperatingMode, [Register; 16]>,
     spsr_map: HashMap<OperatingMode, Register>,
+
+    clock_total: u64,
+    clock_cur: u32,
 }
 
-impl Cpu{
-    pub fn new() -> Cpu {
-        Cpu { 
+impl CPU{
+    pub fn new() -> CPU {
+        CPU { 
             reg: [0; 37], 
             instr: 0,
             shifter_carry: 0,
@@ -82,12 +85,25 @@ impl Cpu{
                 (OperatingMode::Irq, Register::SPSR_irq),
                 (OperatingMode::Und, Register::SPSR_und),
             ]),
+
+            clock_total: 0,
+            clock_cur: 0,
         }
     }
 
     // ---------- main loop (clock)
 
     pub fn clock(&mut self, bus: &mut Bus) {
+        if self.clock_cur == 0 {
+            self.clock_cur += self.decode_execute_instruction(bus);
+        }
+
+        assert!(self.clock_cur > 0);
+        self.clock_cur -= 1;
+    }
+
+    // completes one instruction. Returns number of clock cycles
+    fn decode_execute_instruction(&mut self, bus: &mut Bus) -> u32 {
         // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
         let aligned_pc = match self.instr_set {
             InstructionSet::Arm => self.actual_pc & !11,
@@ -99,6 +115,8 @@ impl Cpu{
         let mut cur_cycles = 0;
         
         let mut increment_pc = true;
+
+        println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
 
         if self.check_cond() {
             cur_cycles +=
@@ -138,12 +156,16 @@ impl Cpu{
                 self.execute_multiply_long()
             }
             else{
-                match (self.instr >> 24) & 0b111 {
-                    0b000 | 0b001 => self.execute_dataproc(),
+                match (self.instr >> 25) & 0b111 {
+                    0b000 | 0b001 => {
+                        println!("executing dataproc");
+                        self.execute_dataproc()
+                    },
                     0b101 => {
                         increment_pc = false;
                         self.execute_branch()
                     },
+                    0b100 => self.execute_block_data_transfer(bus),
                     _ => {
                         print!("Error undefined instruction {:#034b} at pc {}\n", self.instr, self.actual_pc);
                         0
@@ -157,7 +179,9 @@ impl Cpu{
                 InstructionSet::Arm => 0b100,
                 InstructionSet::Thumb => 0b010,
             }
-        }
+        };
+
+        cur_cycles
     }
 
     // ---------- branches
@@ -188,7 +212,7 @@ impl Cpu{
 
     // returns number of clock cycles
     fn execute_dataproc(&mut self) -> u32 {
-        let mut cur_cycles = self.process_reg_dest() + self.process_operand1() + self.process_operand2();
+        let mut cur_cycles = 1 + self.process_reg_dest() + self.process_operand1() + self.process_operand2();
 
         cur_cycles += match (self.instr >> 21) & 0b1111 {
             0b0000 => self.op_and(),
@@ -584,20 +608,9 @@ impl Cpu{
             },
             // register -> memory, word
             (false, false) => {
+                let addr = (addr >> 2) << 2;
                 let res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
-                if (addr & 1) == 1{
-                    bus.store_byte(addr, res as u8);
-                    bus.store_byte(addr + 1, (res >> 8) as u8);
-                    bus.store_byte(addr + 2, (res >> 16) as u8);
-                    bus.store_byte(addr + 3, (res >> 24) as u8);
-                }
-                else if (addr & 0b10) > 0 {
-                    bus.store_halfword(addr, res as u16);
-                    bus.store_halfword(addr + 2, (res >> 16) as u16);
-                }
-                else{
-                    bus.store_word(addr, res);
-                }
+                bus.store_word(addr, res);
                 cycles += 2;
             },
             // memory -> register, byte
@@ -608,6 +621,9 @@ impl Cpu{
             },
             // memory -> register, word
             (true, false) => {
+                let res = bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11));
+                self.set_reg(reg, res);
+                /*
                 if (addr & 0b10) > 0 {
                     let hi = bus.read_halfword(addr) as u32;
                     let lo = bus.read_halfword(addr + 2) as u32;
@@ -617,6 +633,7 @@ impl Cpu{
                     let res = bus.read_word(addr);
                     self.set_reg(reg, res);
                 }
+                */
                 cycles += 3;
             },
         };
@@ -634,7 +651,6 @@ impl Cpu{
     }
 
     fn execute_halfword_signed_transfer(&mut self, bus: &mut Bus) -> u32 {
-        let mut cycles = 0;
         let offset = if (self.instr >> 22) & 1 == 0 {
             self.read_reg(self.instr & 0b1111)
         }
@@ -715,8 +731,97 @@ impl Cpu{
         }
     }
 
+    fn execute_block_data_transfer(&mut self, bus: &mut Bus) -> u32 {
+        // base reg
+        let base_reg = (self.instr >> 16) & 0b1111;
+        let mut addr =  self.read_reg(base_reg);
+
+        let L = (self.instr >> 20) & 1 == 1;
+        let W = (self.instr >> 21) & 1 == 1;
+        let S = (self.instr >> 22) & 1 == 1;
+        let U = (self.instr >> 23) & 1 == 1;
+        let pre = (self.instr >> 24) & 1 == 1;
+
+        let reg_list = self.instr & 0b111111111111;
+        let mut cnt = 0;
+        let r15_appear = (1 << 15) & reg_list > 0;
+
+        for i in 0..16 {
+            if (1 << i) & reg_list > 0 {
+                cnt += 1;
+            }
+        }
+
+        let offset_addr = if U {addr + 4 * cnt} else {addr - 4 * cnt};
+        if !U {
+            addr = offset_addr;
+        }
+
+        let mut addr = (addr as usize >> 2) << 2;
+
+        let delt = match (pre, U) {
+            (true, true) => 1,
+            (false, true) => 0,
+            (true, false) => 0,
+            (false, false) => 1,
+        };
+
+        for i in 0..16 {
+            if (1 << i) & reg_list > 0 {
+                let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
+                if L {
+                    self.reg[reg as usize] = bus.read_word_unaligned(addr + delt);
+                }
+                else{
+                    let mut res =  self.reg[reg as usize];
+                    // account for pc being 12 bytes higher than current position
+                    if i == 15 {
+                        res += 4;
+                    }
+                    bus.store_word_unaligned(addr + delt, res);
+                }
+                
+                addr += 4;
+            }
+        }
+
+        if S && r15_appear && L {
+            self.reg[Register::CPSR as usize] = self.reg[self.spsr_map[&self.op_mode] as usize];
+        }
+
+        if W {
+            self.set_reg(base_reg, offset_addr);
+        }
+
+        if L {
+            if r15_appear {
+                4 + cnt
+            }
+            else{
+                2 + cnt
+            }
+        }
+        else{
+            1 + cnt
+        }
+    }
+
     fn execute_swp(&mut self, bus: &mut Bus) -> u32 {
-        0
+        let B = (self.instr >> 22) & 1 == 1;
+        self.reg_dest = (self.instr >> 12) & 0b1111;
+        let res = self.read_reg(self.instr & 0b1111);
+        let addr = self.read_reg((self.instr >> 16) & 0b1111) as usize;
+
+        if B {
+            self.set_reg(self.reg_dest, bus.read_byte(addr) as u32);
+            bus.store_byte(addr, res as u8);
+        }
+        else{
+            self.set_reg(self.reg_dest, bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11)));
+            bus.store_word_unaligned(addr, res);
+        }
+
+        4
     }
 
     // ---------- miscellaneous helpers
