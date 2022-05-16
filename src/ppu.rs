@@ -23,15 +23,16 @@ impl PPU {
     }
 
     pub fn clock(&mut self, bus: &mut Bus) -> Option<&ScreenBuffer> {
-        let res = None;
+        let mut res = None;
         if self.clock_cur == 0{
             self.clock_cur += self._clock(bus);
+            res = Some(&self.buffer);
         }
         res
     }
 
     // returns number of clock cycles
-    fn _clock(&mut self, bus: &mut Bus) -> u32 {
+    fn _clock(&mut self, bus: &Bus) -> u32 {
         let mut i = 0;
         let mut j = 0;
         let mut addr = 0x06000000;
@@ -49,7 +50,7 @@ impl PPU {
 
                 res >>= 15;
                 num_bits_res -= 15;
-                
+
                 j += 1;
                 if j == 240 {
                     j = 0;
@@ -60,6 +61,6 @@ impl PPU {
 
         };
 
-        280896
+        100
     }
 }

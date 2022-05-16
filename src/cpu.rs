@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::exit, cmp::min};
+use std::{collections::HashMap, process::exit, cmp::min, num::Wrapping};
 use super::bus::Bus;
 
 #[derive(Copy, Clone)]
@@ -54,6 +54,7 @@ pub struct CPU{
 
     clock_total: u64,
     clock_cur: u32,
+    increment_pc: bool,
 }
 
 impl CPU{
@@ -65,7 +66,7 @@ impl CPU{
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            actual_pc: 0,
+            actual_pc: 0x08000000,
             
             instr_set: InstructionSet::Arm,
             op_mode: OperatingMode::Usr,
@@ -88,6 +89,7 @@ impl CPU{
 
             clock_total: 0,
             clock_cur: 0,
+            increment_pc: true,
         }
     }
 
@@ -95,90 +97,106 @@ impl CPU{
 
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
-            self.clock_cur += self.decode_execute_instruction(bus);
+            self.clock_cur += match self.instr_set {
+                InstructionSet::Arm => self.decode_execute_instruction_arm(bus),
+                InstructionSet::Thumb => self.decode_execute_instruction_thumb(bus)
+            }
         }
 
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
     }
 
+      // -------------- ARM INSTRUCTIONS -----------------
+
     // completes one instruction. Returns number of clock cycles
-    fn decode_execute_instruction(&mut self, bus: &mut Bus) -> u32 {
+    fn decode_execute_instruction_arm(&mut self, bus: &mut Bus) -> u32 {
         // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
-        let aligned_pc = match self.instr_set {
-            InstructionSet::Arm => self.actual_pc & !11,
-            InstructionSet::Thumb => self.actual_pc &!1, 
-        };
+        let aligned_pc = self.actual_pc & !0b11;
         self.instr = bus.read_word(aligned_pc as usize);
         self.set_pc(self.actual_pc + 8);
 
         let mut cur_cycles = 0;
         
-        let mut increment_pc = true;
+        self.increment_pc = true;
 
         println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+        print!("    ");
+        for i in 0..16 {
+            print!("R{}: {:x}, ", i, self.read_reg(i));
+        }
+        println!();
 
         if self.check_cond() {
             cur_cycles +=
             // branch and exchange shares 0b000 with execute_dataproc. 
             if (self.instr << 4) >> 8 == 0b000100101111111111110001{
-                increment_pc = false;
+                print!("        BX");
                 self.execute_branch_exchange()
             }
             // load and store instructions
             // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
+                print!("        SWP");
                 self.execute_swp(bus)
             }
             else if (self.instr >> 26) & 0b11 == 1 {
+                print!("        LDR, STR");
                 self.execute_ldr_str(bus)
             }
             else if (self.instr >> 25) & 0b111 == 0 && 
                 ((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
                 ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1) {
+                    print!("        halfword_signed_transfer");
                 self.execute_halfword_signed_transfer(bus)
             }
             // msr and mrs
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
+                print!("        MRS");
                 self.execute_mrs_psr2reg()
             } 
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
+                print!("        MSR reg2psr");
                 self.execute_msr_reg2psr()
             } 
             else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
-                self.execute_msr_reg2psr()
+                print!("        MSR reg imm2psr");
+                self.execute_msr_reg_imm2psr()
             } 
             // multiply and multiply_long share 0b000 with execute_dataproc. 
             else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
+                print!("        MUL, MLA");
                 self.execute_multiply()
             }
             else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
+                print!("        multiply long");
                 self.execute_multiply_long()
             }
             else{
                 match (self.instr >> 25) & 0b111 {
                     0b000 | 0b001 => {
-                        println!("executing dataproc");
+                        print!("        dataproc");
                         self.execute_dataproc()
                     },
                     0b101 => {
-                        increment_pc = false;
+                        print!("        branch");
                         self.execute_branch()
                     },
                     0b100 => self.execute_block_data_transfer(bus),
                     _ => {
-                        print!("Error undefined instruction {:#034b} at pc {}\n", self.instr, self.actual_pc);
+                        print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
                         0
                     }
                 }
-            }
+            };
+            println!();
+        }
+        else{
+            cur_cycles = 1;
         }
 
-        if increment_pc {
-            self.actual_pc += match self.instr_set {
-                InstructionSet::Arm => 0b100,
-                InstructionSet::Thumb => 0b010,
-            }
+        if self.increment_pc {
+            self.actual_pc += 0b100;
         };
 
         cur_cycles
@@ -195,6 +213,7 @@ impl CPU{
             offset |= 0b111111 << 26;
         }
         self.actual_pc = self.read_pc() + offset;
+        self.increment_pc = false;
         3
     }
 
@@ -204,7 +223,9 @@ impl CPU{
         if addr & 1 > 0 {
             self.instr_set = InstructionSet::Thumb;
         };
-        self.actual_pc = addr;
+        self.actual_pc = (addr >> 1) << 1;
+        print!(" addr: {:x}", addr);
+        self.increment_pc = false;
         3
     }
 
@@ -213,6 +234,7 @@ impl CPU{
     // returns number of clock cycles
     fn execute_dataproc(&mut self) -> u32 {
         let mut cur_cycles = 1 + self.process_reg_dest() + self.process_operand1() + self.process_operand2();
+        print!(" reg_dest: {}, operand1: {:x}, operand2: {:x}", self.reg_dest, self.operand1, self.operand2);
 
         cur_cycles += match (self.instr >> 21) & 0b1111 {
             0b0000 => self.op_and(),
@@ -232,7 +254,6 @@ impl CPU{
             0b1110 => self.op_bic(),
             0b1111 => self.op_mvn(),
             _ => {
-                print!("Error undefined instruction {:#034b} at pc {}, data processing opcode unknown\n", self.instr, self.actual_pc);
                 0
             }
         };
@@ -243,53 +264,56 @@ impl CPU{
     //TODO: note copy to CPSR when dest is R15
 
     fn op_adc(&mut self) -> u32 {
-        let res = self.operand1 + self.operand2 + self.read_flag(Flag::C) as u32;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand1) + Wrapping(self.operand2) + Wrapping(self.read_flag(Flag::C) as u32);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, (self.operand1 >> 31 > 0 || self.operand2 >> 31 > 0) && res >> 31 == 0);
             self.set_flag(Flag::V, (self.operand1 >> 31 == self.operand2 >> 31) && res >> 31 != self.operand1 >> 31);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_add(&mut self) -> u32 {
-        let res = self.operand1 + self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand1) + Wrapping(self.operand2);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, (self.operand1 >> 31 > 0 || self.operand2 >> 31 > 0) && res >> 31 == 0);
             self.set_flag(Flag::V, (self.operand1 >> 31 == self.operand2 >> 31) && res >> 31 != self.operand1 >> 31);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_and(&mut self) -> u32 {
         let res = self.operand1 & self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_bic(&mut self) -> u32 {
         let res = self.operand1 & !self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_cmn(&mut self) -> u32 {
-        let res = self.operand1 + self.operand2;
+        let res = Wrapping(self.operand1) + Wrapping(self.operand2);
+        let res = res.0;
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
@@ -300,7 +324,8 @@ impl CPU{
     }
 
     fn op_cmp(&mut self) -> u32 {
-        let res = self.operand1 - self.operand2;
+        let res = Wrapping(self.operand1) - Wrapping(self.operand2);
+        let res = res.0;
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
@@ -312,13 +337,13 @@ impl CPU{
 
     fn op_eor(&mut self) -> u32 {
         let res = self.operand1 ^ self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_mov(&mut self) -> u32 {
@@ -328,47 +353,49 @@ impl CPU{
             self.set_flag(Flag::Z, self.operand2 == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_mvn(&mut self) -> u32 {
         let res = !self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_orr(&mut self) -> u32 {
         let res = self.operand1 | self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_rsb(&mut self) -> u32 {
-        let res = self.operand2 - self.operand1;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand2) - Wrapping(self.operand1);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, !(self.operand1 > self.operand2));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand1 >> 31);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_rsc(&mut self) -> u32 {
         let flag_c = self.read_flag(Flag::C);
-        let res = self.operand2 - self.operand1 + flag_c as u32 - 1;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand2) - Wrapping(self.operand1) + Wrapping(flag_c as u32) - Wrapping(1);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
@@ -382,13 +409,14 @@ impl CPU{
                 self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_sbc(&mut self) -> u32 {
         let flag_c = self.read_flag(Flag::C);
-        let res = self.operand1 - self.operand2 + flag_c as u32 - 1;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand1) - Wrapping(self.operand2) + Wrapping(flag_c as u32) - Wrapping(1);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
@@ -402,19 +430,20 @@ impl CPU{
                 self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_sub(&mut self) -> u32 {
-        let res = self.operand1 - self.operand2;
-        self.reg[self.reg_dest as usize] = res;
+        let res = Wrapping(self.operand1) - Wrapping(self.operand2);
+        let res = res.0;
+        self.set_reg(self.reg_dest, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, !(self.operand1 > self.operand2));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand2 >> 31);
         }
-        (self.reg_dest == Register::R15 as u32) as u32
+        2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_teq(&mut self) -> u32 {
@@ -478,11 +507,11 @@ impl CPU{
 
         let res = if (self.instr >> 21) & 1 > 0 {
             cur_cycles = 2;
-            operand3 * self.operand2 + self.operand1
+            (Wrapping(operand3) * Wrapping(self.operand2) + Wrapping(self.operand1)).0
         }
         else {
             cur_cycles = 1;
-            operand3 * self.operand2
+            (Wrapping(operand3) * Wrapping(self.operand2)).0
         };
 
         self.set_reg(self.reg_dest, res);
@@ -589,7 +618,7 @@ impl CPU{
         };
 
         // P flag
-        if (self.instr >> 24) == 1{
+        if (self.instr >> 24) & 1 == 1{
             addr = offset_addr;
         }
 
@@ -599,6 +628,8 @@ impl CPU{
         let B = (self.instr >> 22) & 1 == 1;
 
         let reg = (self.instr >> 12) & 0b1111;
+
+        print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
 
         match (L,B) {
             // register -> memory, byte
@@ -621,7 +652,13 @@ impl CPU{
             },
             // memory -> register, word
             (true, false) => {
-                let res = bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11));
+                let mut res = bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11));
+                if reg == Register::R15 as u32 {
+                    res &= 0xfffffffc;
+                    // NOTE: may not be correct, maybe comment out
+                    self.increment_pc = false;
+                    cycles += 2;
+                }
                 self.set_reg(reg, res);
                 /*
                 if (addr & 0b10) > 0 {
@@ -639,13 +676,13 @@ impl CPU{
         };
 
         // W flag
-        if (self.instr >> 21) == 1 {
+        if (self.instr >> 21) & 1 == 1 {
             self.set_reg(base_reg, offset_addr);
         };
 
-        if L && reg == Register::R15 as u32 {
-            cycles += 2;
-        }
+        //if L && reg == Register::R15 as u32 {
+        //    cycles += 2;
+        //}
 
         cycles
     }
@@ -672,7 +709,7 @@ impl CPU{
         };
 
         // P flag
-        if (self.instr >> 24) == 1{
+        if (self.instr >> 24) & 1 == 1{
             addr = offset_addr;
         }
 
@@ -716,7 +753,7 @@ impl CPU{
         };
 
         // W flag
-        if (self.instr >> 21) == 1 {
+        if (self.instr >> 21) & 1 == 1 {
             self.set_reg(base_reg, offset_addr);
         };
 
@@ -771,6 +808,11 @@ impl CPU{
                 let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
                 if L {
                     self.reg[reg as usize] = bus.read_word_unaligned(addr + delt);
+                    if i == 15 {
+                        self.reg[reg as usize] &= 0xfffffffc;
+                        // NOTE: may not be correct, maybe comment out
+                        self.increment_pc = false;
+                    }
                 }
                 else{
                     let mut res =  self.reg[reg as usize];
@@ -849,12 +891,12 @@ impl CPU{
     }
 
     fn dataproc_set_cond(&self) -> bool{
-        (self.instr >> 20) & 1 > 0
+        self.instr_set == InstructionSet::Thumb || (self.instr >> 20) & 1 > 0
     }
 
     // modifies self.operand2. returns number of extra cycles (0)
     fn process_immediate_rotate(&mut self) -> u32 {
-        let cur = (self.instr & 0b11111111) << 24;
+        let cur = self.instr & 0b11111111;
         let rotate = ((self.instr >> 8) & 0b1111) * 2;
         if rotate > 0{
             self.shifter_carry = (self.instr >> (rotate-1)) & 1;
@@ -930,7 +972,7 @@ impl CPU{
             },
             0b11 => {
                 if shift_amount > 0{
-                    self.shifter_carry = (self.instr >> (shift_amount % 32-1)) & 1;
+                    self.shifter_carry = (self.instr >> ((shift_amount & 0b11111) - 1)) & 1;
                     self.operand2 = cur.rotate_right(shift_amount);
                 }
                 else{
@@ -947,7 +989,7 @@ impl CPU{
     // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
     fn process_operand2(&mut self) -> u32 {
         self.shifter_carry = self.read_flag(Flag::C) as u32;
-        let is_immediate = (self.instr >> 24) & 1 != 0;
+        let is_immediate = (self.instr >> 25) & 1 != 0;
         // immediate value is used
         if is_immediate {
             self.process_immediate_rotate()
@@ -966,6 +1008,599 @@ impl CPU{
     fn process_reg_dest(&mut self) -> u32 {
         self.reg_dest = (self.instr >> 12) & 0b1111;
         0
+    }
+
+    // ------------- THUMB INSTRUCTIONS -----------
+    
+    fn decode_execute_instruction_thumb(&mut self, bus: &mut Bus) -> u32 {
+        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
+        let aligned_pc = self.actual_pc & !0b01;
+        self.instr = bus.read_halfword(aligned_pc as usize) as u32;
+        self.set_pc(self.actual_pc + 4);
+
+        let mut cur_cycles = 0;
+        
+        self.increment_pc = true;
+
+        println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+        print!("    ");
+        for i in 0..16 {
+            print!("R{}: {:x}, ", i, self.read_reg(i));
+        }
+        println!();
+
+        // for compatibility with thumb op instructions 
+        self.shifter_carry = 0;
+
+        cur_cycles += 
+        if (self.instr >> 13) & 0b11111 == 0b00011 {
+            print!("        thumb ADD SUB");
+            self.execute_thumb_add_sub_imm3()
+        }
+        else if (self.instr >> 10) & 0b111111 == 0b010000 {
+            print!("        thumb ALU general");
+            self.execute_thumb_alu_general()
+        }
+        else if (self.instr >> 10) & 0b111111 == 0b010001 {
+            print!("        thumb Hi reg operations or BX");
+            self.execute_thumb_hi_bx()
+        }
+        else if (self.instr >> 11) & 0b11111 == 0b01001 {
+            print!("        thumb pc relative load");
+            self.execute_thumb_pc_relative_load(bus)
+        }
+        else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 0{
+            print!("        thumb load/store reg offset");
+            self.execute_thumb_load_store_reg_offset(bus)
+        }
+        else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 1{
+            print!("        thumb load/store reg signed byte/halfword");
+            self.execute_thumb_load_store_signed(bus)
+        }
+        else if (self.instr >> 13) & 0b111 == 0b011{
+            print!("        thumb load/store reg imm5");
+            self.execute_thumb_load_store_imm5(bus)
+        }
+        else if (self.instr >> 12) & 0b1111 == 0b1000{
+            print!("        thumb load/store halfword imm5");
+            self.execute_thumb_load_store_halfword_imm5(bus)
+        }
+        else if (self.instr >> 12) & 0b1111 == 0b1001{
+            print!("        thumb load/store word sp offset");
+            self.execute_thumb_load_store_sp(bus)
+        }
+        else if (self.instr >> 12) & 0b1111 == 0b1010{
+            print!("        thumb load address sp/pc");
+            self.execute_thumb_load_address()
+        }
+        else if (self.instr >> 8) & 0b11111111 == 0b10110000{
+            print!("        thumb sp offset");
+            self.execute_thumb_sp_offset()
+        }
+        else{
+            match (self.instr >> 13) & 0b111 {
+                0b000 => {
+                    print!("        thumb LSL LSR ASR imm3");
+                    self.execute_thumb_lsl_lsr_asr_imm5()
+                },
+                0b001 => {
+                    print!("        thumb MOV CMP ADD SUB imm8");
+                    self.execute_thumb_mov_cmp_add_sub_imm8()
+                }
+                _ => {
+                    print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
+                    0
+                }
+            }
+        };
+        if self.increment_pc {
+            self.actual_pc += 0b010;
+        }
+
+        println!();
+
+        cur_cycles
+    }
+
+    // ---------- move shifted register
+    fn execute_thumb_lsl_lsr_asr_imm5(&mut self) -> u32 {
+        let reg_dest = self.instr & 0b111;
+        self.operand1 = self.read_reg((self.instr >> 3) & 0b111);
+        self.operand2 = (self.instr >> 6) & 0b11111;
+        match (self.instr >> 11) & 0b11 {
+            // LSL
+            0b00 => self.op_thumb_lsl(),
+            // LSR
+            0b01 => self.op_thumb_lsr(),
+            // ASR
+            0b10 => self.op_thumb_asr(),
+            _ => 0,
+        };
+
+        1
+    }
+
+    fn op_thumb_lsl(&mut self) -> u32 {
+        let mut res = self.operand1 << self.operand2;
+        self.set_reg(self.reg_dest, res);
+
+        if self.operand2 > 32 {
+            self.set_flag(Flag::C, false);
+        }
+        else if self.operand2 > 0 {
+            self.set_flag(Flag::C, (self.operand1 >> (32 - self.operand2)) & 1 > 0);
+        };
+        self.set_flag(Flag::N, res >> 31 > 0);
+        self.set_flag(Flag::Z, res == 0);
+        0
+    }
+
+    fn op_thumb_lsr(&mut self) -> u32 {
+        let res= self.operand1 >> self.operand2;
+        self.set_reg(self.reg_dest, res);
+        if self.operand2 == 0 {
+            self.operand2 = 32;
+        }
+        self.set_flag(Flag::C, (self.operand1 >> (self.operand2 - 1)) & 1 > 0);
+        self.set_flag(Flag::N, res >> 31 > 0);
+        self.set_flag(Flag::Z, res == 0);
+
+        0
+    }
+
+    fn op_thumb_asr(&mut self) -> u32 {
+        let shift_amount = min(self.operand2, 32);
+        let mut res = self.operand1 >> shift_amount;
+        if self.operand1 >> 31 & 1 > 0 {
+            res |= (0xffffffff >> (32 - shift_amount)) << (32 - shift_amount);
+        }
+        self.set_reg(self.reg_dest, res);
+
+        if self.operand2 == 0 {
+            self.operand2 = 32;
+        }
+        self.set_flag(Flag::C, (self.operand1 >> (shift_amount - 1)) & 1 > 0);
+        self.set_flag(Flag::N, res >> 31 > 0);
+        self.set_flag(Flag::Z, res == 0);
+
+        0
+    }
+
+    fn op_thumb_ror(&mut self) -> u32 {
+        let shift_amount = self.operand2 & 0b11111;
+        let res = 
+        if self.operand2 == 0 {
+            // do nothing
+            self.read_reg(self.reg_dest)
+        }
+        else if shift_amount == 0{
+            self.set_flag(Flag::C, (self.operand1 >> 31) & 1 > 0);
+            self.read_reg(self.reg_dest)
+        }
+        else{
+            self.set_flag(Flag::C, (self.operand1 >> (shift_amount-1)) & 1 > 0);
+            self.operand1.rotate_right(shift_amount)
+        };
+        self.set_reg(self.reg_dest, res);
+        self.set_flag(Flag::N, res >> 31 > 0);
+        self.set_flag(Flag::Z, res == 0);
+
+        0
+    }
+
+    // ---------- add, sub- imm3
+    fn execute_thumb_add_sub_imm3(&mut self) -> u32 {
+        self.reg_dest = self.instr & 0b111;
+        let I = (self.instr >> 10) & 1 > 0;
+        self.operand1 = self.read_reg((self.instr >> 3) & 0b111);
+        self.operand2 = if I {
+            (self.instr >> 6) & 0b111
+        }
+        else{
+            self.read_reg((self.instr >> 6) & 0b111)
+        };
+
+        // ignore extra clock cycles, will be 0
+        match (self.instr >> 9) & 1 {
+            0 => self.op_add(),
+            1 => self.op_sub(),
+            _ => 0,
+        };
+
+        1
+    }
+
+    // ---------- mov, cmp, add, sub- imm8
+    fn execute_thumb_mov_cmp_add_sub_imm8(&mut self) -> u32 {
+        self.operand2 = self.instr & 0b11111111;
+        self.reg_dest = (self.instr >> 8) & 0b111;
+        // same dest and source reg
+        self.operand1 = self.read_reg(self.reg_dest);
+
+        match (self.instr >> 11) & 0b11 {
+            0b00 => self.op_mov(),
+            0b01 => self.op_cmp(),
+            0b10 => self.op_add(),
+            0b11 => self.op_sub(),
+            _ => 0,
+        };
+
+        1
+    }
+
+    fn execute_thumb_alu_general(&mut self) -> u32 {
+        self.operand2 = self.read_reg((self.instr >> 3) & 0b111);
+        self.reg_dest = self.instr & 0b111;
+        // same dest and source reg
+        self.operand1 = self.read_reg(self.reg_dest);
+        
+        let mut shift = false;
+
+        match (self.instr >> 6) & 0b1111 {
+            0b0000 => {
+                self.op_and();
+            },
+            0b0001 => {
+                self.op_eor();
+            },
+            0b0101 => {
+                self.op_adc();
+            },
+            0b0110 => {
+                self.op_sbc();
+            },
+            0b1000 => {
+                self.op_tst();
+            },
+            0b1001 => {
+                self.operand2 = 0;
+                self.op_rsb();
+            },
+            0b1010 => {
+                self.op_cmp();
+            },
+            0b1011 => {
+                self.op_cmn();
+            },
+            0b1100 => {
+                self.op_orr();
+            },
+            0b1101 => {
+                let res = (Wrapping(self.operand1) * Wrapping(self.operand2)).0;
+                self.set_flag(Flag::N, res >> 31 > 0);
+                self.set_flag(Flag::Z, res == 0);
+                self.set_reg(self.reg_dest, res);
+
+                return if self.operand2 >> 8 == 0 || self.operand2 >> 8 == (1 << 24) - 1{
+                    2
+                }
+                else if self.operand2 >> 16 == 0 || self.operand2 >> 16 == (1 << 16) - 1{
+                    3
+                }
+                else if self.operand2 >> 24 == 0 || self.operand2 >> 24 == (1 << 8) - 1{
+                    4
+                }
+                else{
+                    5
+                };
+            },
+            0b1110 => {
+                self.op_bic();
+            },
+            0b1111 => {
+                self.op_mvn();
+            },
+            _ => shift = true,
+        };
+        if !shift{
+            return 1;
+        }
+
+        self.operand2 &= 0b11111111;
+        if self.operand2 > 0 {
+            match (self.instr >> 6) & 0b1111 {
+                0b0010 => {
+                    self.op_thumb_lsl();
+                },
+                0b0011 => {
+                    self.op_thumb_lsr();
+                },
+                0b0100 => {
+                    self.op_thumb_asr();
+                },
+                0b0111 => {
+                    self.op_thumb_ror();
+                },
+                
+                _ => {},
+            };
+        }
+        else{
+            let res = self.read_reg(self.reg_dest);
+            self.set_flag(Flag::N, res >> 31 > 0);
+            self.set_flag(Flag::Z, res == 0);
+        }
+
+        return 2;
+    }
+
+    fn execute_thumb_hi_bx(&mut self) -> u32 { 
+        self.reg_dest = self.instr & 0b111;
+        if (self.instr >> 7) & 1 > 0{
+            self.reg_dest += 8;
+        }
+        let mut reg_src = (self.instr >> 3) & 0b111;
+        if (self.instr >> 6) & 1 > 0{
+            reg_src += 8;
+        }
+        self.operand1 = self.read_reg(self.reg_dest);
+        self.operand2 = self.read_reg(reg_src);
+    
+        1 + match (self.instr >> 8) & 0b11 {
+            0b00 => self.op_add(),
+            0b01 => self.op_cmp(),
+            0b10 => self.op_mov(),
+            0b11 => {
+                if self.operand2 & 1 == 0{
+                    self.instr_set = InstructionSet::Arm;
+                }
+                self.actual_pc = (self.operand2 >> 1) << 1;
+                print!(" bx from thumb");
+                self.increment_pc = false;
+                3
+            }
+            _ => 0
+        }
+    }
+
+    fn execute_thumb_pc_relative_load(&mut self, bus: &Bus) -> u32 {
+        let offset = (self.instr & 0b11111111) << 2;
+        self.reg_dest = (self.instr >> 8) & 0b111;
+        let addr = Wrapping(self.actual_pc) + Wrapping(4) + Wrapping(offset);
+        let addr = addr.0;
+        self.set_reg(self.reg_dest, bus.read_word(addr as usize & !0b11));
+        3
+    }
+
+    fn execute_thumb_load_store_reg_offset(&mut self, bus: &mut Bus) -> u32 {
+        let L = (self.instr >> 11) & 1 > 0;
+        let B = (self.instr >> 10) & 1 > 0;
+
+        let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111)) + Wrapping(self.read_reg((self.instr >> 6) & 0b111));
+        let addr = addr.0 as usize;
+        self.reg_dest = self.instr & 0b111;
+
+        match (L,B) {
+            // register -> memory, word
+            (false, false) => {
+                let res = self.read_reg(self.reg_dest);
+                bus.store_word(addr, res);
+                2
+            }
+            // memory -> register, word
+            (true, false) => {
+                let res = bus.read_word(addr);
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+            // register -> memory, byte
+            (false, true) => {
+                let res = self.read_reg(self.reg_dest) as u8;
+                bus.store_byte(addr, res);
+                2
+            }
+            // memory -> register, byte
+            (true, true) => {
+                let res = bus.read_byte(addr);
+                self.set_reg(self.reg_dest, res as u32);
+                3
+            }
+        }
+    }
+
+    fn execute_thumb_load_store_signed(&mut self, bus: &mut Bus) -> u32 {
+        let H = (self.instr >> 11) & 1 > 0;
+        let S = (self.instr >> 10) & 1 > 0;
+
+        let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111)) + Wrapping(self.read_reg((self.instr >> 6) & 0b111));
+        let addr = addr.0 as usize;
+        self.reg_dest = self.instr & 0b111;
+
+        match (S,H) {
+            // register -> memory, unsigned halfword
+            (false, false) => {
+                let res = self.read_reg(self.reg_dest) as u16;
+                bus.store_halfword(addr, res);
+                2
+            },
+            // memory -> register, unsigned halfword
+            (false, true) => {
+                let res = bus.read_halfword(addr) as u32;
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+            // memory -> register, signed byte
+            (true, false) => {
+                let mut res = bus.read_byte(addr) as u32;
+                if (res >> 7) & 1 > 0{
+                    res |= !0b11111111;
+                }
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+            // memory -> register, signed halfword
+            (true, true) => {
+                let mut res = bus.read_halfword(addr) as u32;
+                if (res >> 15) & 1 > 0{
+                    res |= !0b1111111111111111;
+                }
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+        }
+    }
+
+    fn execute_thumb_load_store_imm5(&mut self, bus: &mut Bus) -> u32 {
+        let B = (self.instr >> 12) & 1 > 0;
+        let L = (self.instr >> 11) & 1 > 0;
+        self.reg_dest = self.instr & 0b111;
+        let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111));
+        let addr = if B {addr + Wrapping((self.instr >> 6) & 0b11111)} else {addr + Wrapping(((self.instr >> 6) & 0b11111) << 2)};
+        let addr = addr.0 as usize;
+
+        match (L,B) {
+            // register -> memory, word
+            (false, false) => {
+                let res = self.read_reg(self.reg_dest);
+                bus.store_word(addr, res);
+                2
+            }
+            // memory -> register, word
+            (true, false) => {
+                let res = bus.read_word(addr);
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+            // register -> memory, byte
+            (false, true) => {
+                let res = self.read_reg(self.reg_dest) as u8;
+                bus.store_byte(addr, res);
+                2
+            }
+            // memory -> register, byte
+            (true, true) => {
+                let res = bus.read_byte(addr);
+                self.set_reg(self.reg_dest, res as u32);
+                3
+            }
+        }
+    }
+
+    fn execute_thumb_load_store_halfword_imm5(&mut self, bus: &mut Bus) -> u32 {
+        self.reg_dest = self.instr & 0b111;
+        let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111)) + Wrapping(((self.instr >> 6) & 0b11111) << 1);
+        let addr = addr.0 as usize;
+        
+        match (self.instr >> 11) & 1 > 0{
+            false => {
+                let res = self.read_reg(self.reg_dest) as u16;
+                bus.store_halfword(addr, res);
+                2
+            },
+            true => {
+                let res = bus.read_halfword(addr);
+                self.set_reg(self.reg_dest, res as u32);
+                3
+            }
+        }
+    }
+
+    // IMPORTANT NOTE: reference materials differ on which register number is SP. 
+    // cpu_technical_spec_long.pdf says R13. ARM7TDMI_data_sheet.pdf says R7.
+    // R13 will be used here. May need to be modified. 
+    // STR, LDR
+    fn execute_thumb_load_store_sp(&mut self, bus: &mut Bus) -> u32 {
+        let L = (self.instr >> 11) & 1 > 0;
+        let addr = Wrapping(self.read_reg(13)) + Wrapping((self.instr & 0b11111111) << 2);
+        let addr = addr.0 as usize;
+        self.reg_dest = (self.instr >> 8) & 0b111;
+
+        match L {
+            false => {
+                let res = self.read_reg(self.reg_dest);
+                bus.store_word(addr, res);
+                2
+            },
+            true => {
+                let res = bus.read_word(addr);
+                self.set_reg(self.reg_dest, res);
+                3
+            }
+        }
+    }
+
+    fn execute_thumb_load_address(&mut self) -> u32 {
+        let SP = (self.instr >> 11) & 1 > 0;
+        self.reg_dest = (self.instr >> 8) & 0b111;
+        let offset = Wrapping((self.instr & 0b11111111) << 2);
+
+        let res = match SP {
+            false => Wrapping(self.actual_pc) + Wrapping(4) + offset,
+            true => Wrapping(self.read_reg(13)) + offset,
+        };
+        self.set_reg(self.reg_dest, res.0);
+
+        1
+    }
+
+    fn execute_thumb_sp_offset(&mut self) -> u32 {
+        let offset = Wrapping((self.instr & 0b1111111) << 2);
+        let neg = (self.instr >> 7) & 1 > 0;
+        let mut res = Wrapping(self.read_reg(13));
+        match neg {
+            false => res += offset,
+            true => res -= offset
+        };
+        self.set_reg(13, res.0);
+        
+        1
+    }
+
+    fn execute_thumb_push_pop(&mut self, bus: &mut Bus) -> u32 {
+        let L = (self.instr >> 11) & 1 > 0;
+        let R = (self.instr >> 8) & 1 > 0;
+        let reg_list = self.instr & 0b11111111;
+        let mut cnt = R as u32;
+        for i in 0..8{
+            if reg_list & (1 << i) > 0{
+                cnt += 1;
+            }
+        }
+        let mut start_addr = Wrapping(self.read_reg(13));
+        if !L {
+            start_addr -= Wrapping(4 * cnt);
+        }
+        let mut addr = start_addr.0 as usize & !0b11;
+        
+        for i in 0..8{
+            if reg_list & (1 << i) > 0{
+                if L {
+                    let res = bus.read_word(addr);
+                    self.set_reg(i, res);
+                }
+                else{
+                    let res = self.read_reg(i);
+                    bus.store_word(addr, res);
+                }
+                addr += 4;
+            }
+        }
+        if R {
+            if L {
+                let res = bus.read_word(addr);
+                self.actual_pc = res & 0xfffffffe;
+                self.increment_pc = false;
+            }
+            else{
+                let res = self.read_reg(14);
+                bus.store_word(addr, res);
+            }
+            addr += 4;
+        }
+
+        if L {
+            self.set_reg(13, addr as u32);
+        }
+        else{
+            self.set_reg(13, start_addr.0);
+        }
+
+        if L {
+            cnt + 2
+        }
+        else{
+            cnt + 1
+        }
     }
 
     // ---------- read and set helpers

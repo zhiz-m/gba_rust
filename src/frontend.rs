@@ -54,7 +54,7 @@ impl Frontend{
     }
     
     pub fn start(&mut self) -> Result<(), &'static str>{
-        self.window = Some(WindowSettings::new(&self.title, [160, 240])
+        self.window = Some(WindowSettings::new(&self.title, [480, 320])
             .graphics_api(OpenGL::V3_2)
             .exit_on_esc(true)
             .build()
@@ -72,13 +72,12 @@ impl Frontend{
                 self.gl.as_mut().unwrap().draw(args.viewport(), |c, gl| {
                     clear([0., 0., 0., 1.], gl);
                     
-                    for i in 0..160{
-                        for j in 0..240{
+                    for j in 0..160{
+                        for i in 0..240{
                             let transform = c
                                 .transform
-                                .trans(i as f64, j as f64);
-                            let pixel = buf.read_pixel(i, j);
-                            let color = [buf.read_pixel(i, j)];
+                                .trans(i as f64 * 2., j as f64 * 2.);
+                            let pixel = buf.read_pixel(j, i);
                             rectangle([pixel.r, pixel.g, pixel.b, 1.], square, transform, gl);
                         }
                     }
