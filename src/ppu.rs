@@ -22,12 +22,13 @@ impl PPU {
         }
     }
 
-    pub fn clock(&mut self, bus: &mut Bus) -> Option<&ScreenBuffer> {
+    pub fn clock(&mut self, bus: &mut Bus) -> Option<ScreenBuffer> {
         let mut res = None;
         if self.clock_cur == 0{
             self.clock_cur += self._clock(bus);
-            res = Some(&self.buffer);
+            res = Some(self.buffer.clone());
         }
+        self.clock_cur -= 1;
         res
     }
 

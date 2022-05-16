@@ -1,4 +1,4 @@
-use std::{collections::HashMap, process::exit, cmp::min, num::Wrapping};
+use std::{collections::HashMap, process::exit, cmp::min, num::Wrapping, io::{self, Write}};
 use super::bus::Bus;
 
 #[derive(Copy, Clone)]
@@ -44,7 +44,7 @@ pub struct CPU{
     operand1: u32,
     operand2: u32,
     reg_dest: u32,
-    actual_pc: u32,
+    pub actual_pc: u32,
 
     instr_set: InstructionSet,
     op_mode: OperatingMode, 
@@ -57,17 +57,27 @@ pub struct CPU{
     increment_pc: bool,
 }
 
+const DEBUG: bool = true;
+
+// ---------- misc
+fn debug(msg: &str) {
+    if DEBUG{
+        print!("{}", msg);
+    }
+}
+
 impl CPU{
     pub fn new() -> CPU {
-        CPU { 
+        let mut res = CPU { 
             reg: [0; 37], 
             instr: 0,
             shifter_carry: 0,
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            actual_pc: 0x08000000,
-            
+            //actual_pc: 0x08000000,
+            actual_pc: 0x80002f0,
+
             instr_set: InstructionSet::Arm,
             op_mode: OperatingMode::Usr,
 
@@ -90,7 +100,9 @@ impl CPU{
             clock_total: 0,
             clock_cur: 0,
             increment_pc: true,
-        }
+        };
+        res.set_reg(13, 0x03007FF0);
+        res
     }
 
     // ---------- main loop (clock)
@@ -116,70 +128,69 @@ impl CPU{
         self.instr = bus.read_word(aligned_pc as usize);
         self.set_pc(self.actual_pc + 8);
 
+        //if self.actual_pc == 0x80002f0  {
+        //    println!("   reached");
+        //}
+
         let mut cur_cycles = 0;
         
         self.increment_pc = true;
 
-        println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
-        print!("    ");
-        for i in 0..16 {
-            print!("R{}: {:x}, ", i, self.read_reg(i));
-        }
-        println!();
+        self.print_pc();
 
-        if self.check_cond() {
+        if self.check_cond(self.instr >> 28) {
             cur_cycles +=
             // branch and exchange shares 0b000 with execute_dataproc. 
             if (self.instr << 4) >> 8 == 0b000100101111111111110001{
-                print!("        BX");
+                debug("        BX");
                 self.execute_branch_exchange()
             }
             // load and store instructions
             // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
-                print!("        SWP");
+                debug("        SWP");
                 self.execute_swp(bus)
             }
             else if (self.instr >> 26) & 0b11 == 1 {
-                print!("        LDR, STR");
+                debug("        LDR, STR");
                 self.execute_ldr_str(bus)
             }
             else if (self.instr >> 25) & 0b111 == 0 && 
                 ((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
                 ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1) {
-                    print!("        halfword_signed_transfer");
+                    debug("        halfword_signed_transfer");
                 self.execute_halfword_signed_transfer(bus)
             }
             // msr and mrs
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
-                print!("        MRS");
+                debug("        MRS");
                 self.execute_mrs_psr2reg()
             } 
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
-                print!("        MSR reg2psr");
+                debug("        MSR reg2psr");
                 self.execute_msr_reg2psr()
             } 
             else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
-                print!("        MSR reg imm2psr");
+                debug("        MSR reg imm2psr");
                 self.execute_msr_reg_imm2psr()
             } 
             // multiply and multiply_long share 0b000 with execute_dataproc. 
             else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
-                print!("        MUL, MLA");
+                debug("        MUL, MLA");
                 self.execute_multiply()
             }
             else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
-                print!("        multiply long");
+                debug("        multiply long");
                 self.execute_multiply_long()
             }
             else{
                 match (self.instr >> 25) & 0b111 {
                     0b000 | 0b001 => {
-                        print!("        dataproc");
+                        debug("        dataproc");
                         self.execute_dataproc()
                     },
                     0b101 => {
-                        print!("        branch");
+                        debug("        branch");
                         self.execute_branch()
                     },
                     0b100 => self.execute_block_data_transfer(bus),
@@ -189,7 +200,7 @@ impl CPU{
                     }
                 }
             };
-            println!();
+            debug("\n\n");
         }
         else{
             cur_cycles = 1;
@@ -208,7 +219,7 @@ impl CPU{
         if (self.instr >> 24) & 1 == 1 {
             self.reg[Register::R14 as usize] = self.actual_pc + 4;
         }
-        let mut offset = (self.instr << 10) >> 8;
+        let mut offset = (self.instr << 8) >> 6;
         if (offset >> 25) & 1 == 1 {
             offset |= 0b111111 << 26;
         }
@@ -224,7 +235,7 @@ impl CPU{
             self.instr_set = InstructionSet::Thumb;
         };
         self.actual_pc = (addr >> 1) << 1;
-        print!(" addr: {:x}", addr);
+        //print!(" addr: {:x}", addr);
         self.increment_pc = false;
         3
     }
@@ -234,7 +245,7 @@ impl CPU{
     // returns number of clock cycles
     fn execute_dataproc(&mut self) -> u32 {
         let mut cur_cycles = 1 + self.process_reg_dest() + self.process_operand1() + self.process_operand2();
-        print!(" reg_dest: {}, operand1: {:x}, operand2: {:x}", self.reg_dest, self.operand1, self.operand2);
+        //print!(" reg_dest: {}, operand1: {:x}, operand2: {:x}", self.reg_dest, self.operand1, self.operand2);
 
         cur_cycles += match (self.instr >> 21) & 0b1111 {
             0b0000 => self.op_and(),
@@ -277,6 +288,9 @@ impl CPU{
     }
 
     fn op_add(&mut self) -> u32 {
+        if self.reg_dest == 0 {
+            println!("add PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
+        }
         let res = Wrapping(self.operand1) + Wrapping(self.operand2);
         let res = res.0;
         self.set_reg(self.reg_dest, res);
@@ -325,6 +339,7 @@ impl CPU{
 
     fn op_cmp(&mut self) -> u32 {
         let res = Wrapping(self.operand1) - Wrapping(self.operand2);
+        print!(" op1: {}, op2: {}, res: {}, set_cond: {}", self.operand1, self.operand2, res, self.dataproc_set_cond());
         let res = res.0;
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
@@ -347,6 +362,12 @@ impl CPU{
     }
 
     fn op_mov(&mut self) -> u32 {
+        if self.reg_dest == 0 {
+            println!("PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
+        }
+        //if self.reg_dest == 8 && self.operand2 == 16 {
+        //    println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
+        //}
         self.reg[self.reg_dest as usize] = self.operand2;
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, self.operand2 >> 31 > 0);
@@ -629,7 +650,7 @@ impl CPU{
 
         let reg = (self.instr >> 12) & 0b1111;
 
-        print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
+        //print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
 
         match (L,B) {
             // register -> memory, byte
@@ -655,6 +676,7 @@ impl CPU{
                 let mut res = bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11));
                 if reg == Register::R15 as u32 {
                     res &= 0xfffffffc;
+                    self.actual_pc = res;
                     // NOTE: may not be correct, maybe comment out
                     self.increment_pc = false;
                     cycles += 2;
@@ -779,7 +801,7 @@ impl CPU{
         let U = (self.instr >> 23) & 1 == 1;
         let pre = (self.instr >> 24) & 1 == 1;
 
-        let reg_list = self.instr & 0b111111111111;
+        let reg_list = self.instr & 0b1111111111111111;
         let mut cnt = 0;
         let r15_appear = (1 << 15) & reg_list > 0;
 
@@ -803,6 +825,8 @@ impl CPU{
             (false, false) => 1,
         };
 
+        io::stdout().flush().unwrap();
+
         for i in 0..16 {
             if (1 << i) & reg_list > 0 {
                 let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
@@ -811,6 +835,7 @@ impl CPU{
                     if i == 15 {
                         self.reg[reg as usize] &= 0xfffffffc;
                         // NOTE: may not be correct, maybe comment out
+                        self.actual_pc = self.reg[reg as usize];
                         self.increment_pc = false;
                     }
                 }
@@ -868,8 +893,7 @@ impl CPU{
 
     // ---------- miscellaneous helpers
 
-    fn check_cond(&self) -> bool{
-        let cond = self.instr >> 28;
+    fn check_cond(&self, cond: u32) -> bool{
         match cond {
             0b0000 => self.read_flag(Flag::Z),
             0b0001 => !self.read_flag(Flag::Z),
@@ -881,9 +905,9 @@ impl CPU{
             0b0111 => !self.read_flag(Flag::V),
             0b1000 => self.read_flag(Flag::C) && !self.read_flag(Flag::Z),
             0b1001 => !self.read_flag(Flag::C) || self.read_flag(Flag::Z),
-            0b1010 => self.read_flag(Flag::N) == !self.read_flag(Flag::V),
+            0b1010 => self.read_flag(Flag::N) == self.read_flag(Flag::V),
             0b1011 => self.read_flag(Flag::N) != self.read_flag(Flag::V),
-            0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == !self.read_flag(Flag::V)),
+            0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == self.read_flag(Flag::V)),
             0b1101 => self.read_flag(Flag::Z) || (self.read_flag(Flag::N) != self.read_flag(Flag::V)),
             0b1110 => true,
             _ => panic!("cond field not valid")
@@ -960,7 +984,7 @@ impl CPU{
                     }
                     shift_amount = min(shift_amount, 32);
                     
-                    self.operand2 = cur >> shift_amount;
+                    self.operand2 = if shift_amount == 32 {0} else {cur >> shift_amount};
                     if shift_amount > 0 {
                         self.shifter_carry = (cur >> (shift_amount-1)) & 1;
                     }
@@ -1022,70 +1046,85 @@ impl CPU{
         
         self.increment_pc = true;
 
-        println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
-        print!("    ");
-        for i in 0..16 {
-            print!("R{}: {:x}, ", i, self.read_reg(i));
-        }
-        println!();
+        self.print_pc();
 
         // for compatibility with thumb op instructions 
         self.shifter_carry = 0;
 
         cur_cycles += 
-        if (self.instr >> 13) & 0b11111 == 0b00011 {
-            print!("        thumb ADD SUB");
+        if (self.instr >> 11) & 0b11111 == 0b00011 {
+            debug("        thumb ADD SUB");
             self.execute_thumb_add_sub_imm3()
         }
         else if (self.instr >> 10) & 0b111111 == 0b010000 {
-            print!("        thumb ALU general");
+            debug("        thumb ALU general");
             self.execute_thumb_alu_general()
         }
         else if (self.instr >> 10) & 0b111111 == 0b010001 {
-            print!("        thumb Hi reg operations or BX");
+            debug("        thumb Hi reg operations or BX");
             self.execute_thumb_hi_bx()
         }
         else if (self.instr >> 11) & 0b11111 == 0b01001 {
-            print!("        thumb pc relative load");
+            debug("        thumb pc relative load");
             self.execute_thumb_pc_relative_load(bus)
         }
         else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 0{
-            print!("        thumb load/store reg offset");
+            debug("        thumb load/store reg offset");
             self.execute_thumb_load_store_reg_offset(bus)
         }
         else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 1{
-            print!("        thumb load/store reg signed byte/halfword");
+            debug("        thumb load/store reg signed byte/halfword");
             self.execute_thumb_load_store_signed(bus)
         }
-        else if (self.instr >> 13) & 0b111 == 0b011{
-            print!("        thumb load/store reg imm5");
-            self.execute_thumb_load_store_imm5(bus)
-        }
-        else if (self.instr >> 12) & 0b1111 == 0b1000{
-            print!("        thumb load/store halfword imm5");
-            self.execute_thumb_load_store_halfword_imm5(bus)
-        }
-        else if (self.instr >> 12) & 0b1111 == 0b1001{
-            print!("        thumb load/store word sp offset");
-            self.execute_thumb_load_store_sp(bus)
-        }
-        else if (self.instr >> 12) & 0b1111 == 0b1010{
-            print!("        thumb load address sp/pc");
-            self.execute_thumb_load_address()
-        }
         else if (self.instr >> 8) & 0b11111111 == 0b10110000{
-            print!("        thumb sp offset");
+            debug("        thumb sp offset");
             self.execute_thumb_sp_offset()
         }
+        else if (self.instr >> 9) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111 == 0b1011{
+            debug("        thumb push/pop");
+            self.execute_thumb_push_pop(bus)
+        }
+        else if (self.instr >> 11) & 0b11111 == 0b11100 {
+            debug("        thumb uncond branch");
+            self.execute_thumb_uncond_branch()
+        }
         else{
-            match (self.instr >> 13) & 0b111 {
-                0b000 => {
-                    print!("        thumb LSL LSR ASR imm3");
+            match (self.instr >> 12) & 0b1111 {
+                0b0001 | 0b0000 => {
+                    debug("        thumb LSL LSR ASR imm5");
                     self.execute_thumb_lsl_lsr_asr_imm5()
                 },
-                0b001 => {
-                    print!("        thumb MOV CMP ADD SUB imm8");
+                0b0010 | 0b0011 => {
+                    debug("        thumb MOV CMP ADD SUB imm8");
                     self.execute_thumb_mov_cmp_add_sub_imm8()
+                },
+                0b0111 | 0b0110 => {
+                    debug("        thumb load/store reg imm5");
+                    self.execute_thumb_load_store_imm5(bus)
+                },
+                0b1000 => {
+                    debug("        thumb load/store halfword imm5");
+                    self.execute_thumb_load_store_halfword_imm5(bus)
+                },
+                0b1001 => {
+                    debug("        thumb load/store word sp offset");
+                    self.execute_thumb_load_store_sp(bus)
+                },
+                0b1010 => {
+                    debug("        thumb load address sp/pc");
+                    self.execute_thumb_load_address()
+                },
+                0b1100 => {
+                    debug("        thumb multiple load/store");
+                    self.execute_thumb_load_store_multiple(bus)
+                },
+                0b1101 => {
+                    debug("        thumb cond branch");
+                    self.execute_thumb_cond_branch()
+                }
+                0b1111 => {
+                    debug("        thumb long branch and link");
+                    self.execute_thumb_uncond_branch_link()
                 }
                 _ => {
                     print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
@@ -1097,14 +1136,14 @@ impl CPU{
             self.actual_pc += 0b010;
         }
 
-        println!();
+        debug("\n\n");
 
         cur_cycles
     }
 
     // ---------- move shifted register
     fn execute_thumb_lsl_lsr_asr_imm5(&mut self) -> u32 {
-        let reg_dest = self.instr & 0b111;
+        self.reg_dest = self.instr & 0b111;
         self.operand1 = self.read_reg((self.instr >> 3) & 0b111);
         self.operand2 = (self.instr >> 6) & 0b11111;
         match (self.instr >> 11) & 0b11 {
@@ -1121,7 +1160,7 @@ impl CPU{
     }
 
     fn op_thumb_lsl(&mut self) -> u32 {
-        let mut res = self.operand1 << self.operand2;
+        let res = self.operand1 << self.operand2;
         self.set_reg(self.reg_dest, res);
 
         if self.operand2 > 32 {
@@ -1149,16 +1188,18 @@ impl CPU{
     }
 
     fn op_thumb_asr(&mut self) -> u32 {
-        let shift_amount = min(self.operand2, 32);
-        let mut res = self.operand1 >> shift_amount;
+        let mut shift_amount = min(self.operand2, 32);
+        if shift_amount == 0 {
+            shift_amount = 32;
+        }
+        let mut res = if shift_amount == 32 {0} else {self.operand1 >> shift_amount};
         if self.operand1 >> 31 & 1 > 0 {
             res |= (0xffffffff >> (32 - shift_amount)) << (32 - shift_amount);
         }
         self.set_reg(self.reg_dest, res);
 
-        if self.operand2 == 0 {
-            self.operand2 = 32;
-        }
+        
+        //print!(" shift amount: {:#010x}", shift_amount);
         self.set_flag(Flag::C, (self.operand1 >> (shift_amount - 1)) & 1 > 0);
         self.set_flag(Flag::N, res >> 31 > 0);
         self.set_flag(Flag::Z, res == 0);
@@ -1345,7 +1386,7 @@ impl CPU{
                     self.instr_set = InstructionSet::Arm;
                 }
                 self.actual_pc = (self.operand2 >> 1) << 1;
-                print!(" bx from thumb");
+                //print!(" bx from thumb");
                 self.increment_pc = false;
                 3
             }
@@ -1359,6 +1400,7 @@ impl CPU{
         let addr = Wrapping(self.actual_pc) + Wrapping(4) + Wrapping(offset);
         let addr = addr.0;
         self.set_reg(self.reg_dest, bus.read_word(addr as usize & !0b11));
+        //print!(" final addr: {:#010x}", addr as usize & !0b11);
         3
     }
 
@@ -1603,6 +1645,110 @@ impl CPU{
         }
     }
 
+    fn execute_thumb_load_store_multiple(&mut self, bus: &mut Bus) -> u32 {
+        let reg_list = self.instr & 0b11111111;
+        let L = (self.instr >> 11) & 1 > 0;
+        let addr = self.read_reg((self.instr >> 8) & 0b111) & !0b11;
+        let mut addr = addr as usize;
+
+        let mut cnt = 0;
+        for i in 0..8 {
+            if reg_list & (1 << i) > 0{
+                if !L {
+                    let res = self.read_reg(i);
+                    bus.store_word(addr, res);
+                }
+                else{
+                    let res = bus.read_word(addr);
+                    self.set_reg(i, res);
+                }
+                addr += 4;
+                cnt += 1;
+            }
+        }
+
+        if L {
+            cnt + 2
+        }
+        else{
+            cnt + 1
+        }
+    }
+
+    fn execute_thumb_cond_branch(&mut self) -> u32 {
+        if self.check_cond((self.instr >> 8) & 0b1111){
+            let mut offset = (self.instr & 0b11111111) << 1;
+            //print!(" offset {:#014b}", offset);
+            if (offset >> 8) & 1 > 0 {
+                offset |= !0 & 0b000000000;
+            }
+            let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
+            self.actual_pc = res.0;
+            self.increment_pc = false;
+            3
+        }
+        else{
+            1
+        }
+    }
+
+    fn execute_thumb_uncond_branch(&mut self) -> u32 {
+        let mut offset = (self.instr & 0b11111111111) << 1;
+        if (offset >> 11) & 1 > 0 {
+            offset |= !0 & 0b000000000000;
+        }
+        let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
+        self.actual_pc = res.0;
+        self.increment_pc = false;
+        3
+    }
+
+    fn execute_thumb_uncond_branch_link(&mut self) -> u32 {
+        let H = (self.instr >> 11) & 1 > 0;
+        let mut offset = self.instr & 0b11111111111;
+
+        match H {
+            false => {
+                offset <<= 12;
+                if (offset >> 22) & 1 > 0 {
+                    offset |= 0b111111111 << 23;
+                }
+                let offset = Wrapping(offset) + Wrapping(self.read_reg(Register::R15 as u32));
+                self.set_reg(14, offset.0);
+            }
+            true => {
+                let offset = self.read_reg(14) + (offset << 1);
+                //print!(" value placed into R15: {:#010x}", offset);
+                self.set_reg(14, (self.actual_pc + 2) | 1);
+                self.actual_pc = offset;
+                self.increment_pc = false;
+            }
+        };
+
+        4
+    }
+
+    // ---------- misc
+    pub fn print_pc(&self) {
+        if !DEBUG{
+            //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
+            return;
+        }
+        if let InstructionSet::Arm = self.instr_set{
+            println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+        }
+        else{
+            println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
+        }
+        print!("    ");
+        for i in 0..16 {
+            print!("R{}: {:x}, ", i, self.read_reg(i));
+        }
+        println!();
+        print!("N: {}, Z: {}, C: {}, V: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V));
+        println!();
+    }
+
     // ---------- read and set helpers
 
     fn read_pc(&self) -> u32 {
@@ -1623,12 +1769,17 @@ impl CPU{
 
     fn read_flag(&self, f: Flag) -> bool {
         let s = f as u32;
-        (self.reg[Register::CPSR as usize] << s) != 0
+        (self.reg[Register::CPSR as usize] >> s) & 1 > 0
     }
 
     fn set_flag(&mut self, f: Flag, val: bool) {
         let s = f as u32;
-        self.reg[Register::CPSR as usize] |= (val as u32) << s;
+        if val{
+            self.reg[Register::CPSR as usize] |= 1 << s;
+        }
+        else{
+            self.reg[Register::CPSR as usize] &= !(1 << s);
+        }
     }
 
     fn read_reg(&self, reg: u32) -> u32 {
