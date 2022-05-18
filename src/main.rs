@@ -3,15 +3,17 @@ mod cpu;
 mod ppu;
 mod frontend;
 mod config;
+mod key_input;
 
 use bus::Bus;
 use cpu::CPU;
-use ppu::PPU;
+use ppu::{
+    PPU, ScreenBuffer
+};
 use frontend::{
-    Frontend, ScreenBuffer, Pixel
+    Frontend
 };
 
-use core::time;
 use std::{env, thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{self, Sender}};
 
 struct Emulator {
@@ -41,7 +43,7 @@ impl Emulator {
                 //self.cpu.debug = true;
             }
             else{
-                self.cpu.debug = false;
+                //self.cpu.debug = false;
             }
             self.cpu.clock(&mut self.bus);
 
@@ -68,9 +70,11 @@ impl Emulator {
                 }
             }
             
+            /*
             if clock % 16000000 == 100 {
                 println!();
             }
+            */
 
             clock += 1;
 
@@ -82,8 +86,6 @@ impl Emulator {
             }
             
         }
-
-        Ok(())
     }
 }
 

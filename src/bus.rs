@@ -23,17 +23,21 @@ impl Bus {
             res.store_byte(i + 0x08000000, x.unwrap());
         };
 
+        // set key registers to 1
+        res.store_halfword(0x04000130, 0b1111111111);
+
+        /*   
         let x:u32 = 0b11100011101000000000101100000001;
 
         let mut i = 0x08000000;
-        while i < 0x0fffffff {
+        while i < 0x0fffffff {    
             let cur = res.read_word(i);
             if cur == x{
                 println!("match found, addr = {:#x}", i);
             }
             i+=4;
         }
-
+        */
         res
     }
 

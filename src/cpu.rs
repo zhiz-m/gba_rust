@@ -52,17 +52,11 @@ pub struct CPU{
     reg_map: HashMap<OperatingMode, [Register; 16]>,
     spsr_map: HashMap<OperatingMode, Register>,
 
-    clock_total: u64,
     clock_cur: u32,
     increment_pc: bool,
 
     pub debug: bool,
 }
-
-const DEBUG: bool = false;
-
-// ---------- misc
-
 
 impl CPU{
     pub fn new() -> CPU {
@@ -96,7 +90,6 @@ impl CPU{
                 (OperatingMode::Und, Register::SPSR_und),
             ]),
 
-            clock_total: 0,
             clock_cur: 0,
             increment_pc: true,
 
@@ -963,19 +956,23 @@ impl CPU{
         // register is used
         let reg = &self.reg_map.get(&self.op_mode).unwrap()[self.instr as usize & 0b1111];
         let cur = self.reg[*reg as usize];
-        let mut shift_amount: u32; 
+        
 
         let is_immediate = (self.instr >> 4) & 1 == 0;
+
+        let mut shift_amount = 
+
         // the shift amount is a literal; ie not a register
         if is_immediate {
-            shift_amount = (self.instr >> 7) & 0b11111;
+            (self.instr >> 7) & 0b11111
         }
         // the shift amount is stored in the lowest byte in a register
         else{
-            let reg = (self.instr >> 8) & 0b1111;
-            let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
-            shift_amount = self.reg[*reg as usize] & 0b11111111;
-        }
+            //let reg = (self.instr >> 8) & 0b1111;
+            //let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
+            //shift_amount = self.reg[*reg as usize] & 0b11111111;
+            self.read_reg((self.instr >> 8) & 0b1111) & 0b11111111
+        };
 
         let shift_type = (self.instr >> 5) & 0b11;
         match shift_type{
@@ -986,7 +983,7 @@ impl CPU{
                     self.shifter_carry = 0;
                 }
                 else{
-                    self.operand2 = cur << shift_amount;
+                    self.operand2 = if shift_amount < 32 {cur << shift_amount} else {0};
                     if shift_amount > 0{
                         self.shifter_carry = (cur >> (32 - shift_amount)) & 1;
                     }
@@ -1001,7 +998,7 @@ impl CPU{
                     self.shifter_carry = 0;
                 }
                 else{
-                    self.operand2 = cur >> shift_amount;
+                    self.operand2 = if shift_amount < 32 {cur >> shift_amount} else {0};
                     if shift_amount > 0{
                         self.shifter_carry = (cur >> (shift_amount-1)) & 1;
                     }
@@ -1026,11 +1023,12 @@ impl CPU{
             },
             0b11 => {
                 if shift_amount > 0{
-                    self.shifter_carry = (self.instr >> ((shift_amount & 0b11111) - 1)) & 1;
+                    let shift_mod = shift_amount & 0b11111;
+                    self.shifter_carry = (cur >> (if shift_mod > 0 {shift_mod} else {32} - 1)) & 1;
                     self.operand2 = cur.rotate_right(shift_amount);
                 }
                 else{
-                    self.shifter_carry = self.instr & 1;
+                    self.shifter_carry = cur & 1;
                     self.operand2 = (cur >> 1) | ((self.read_flag(Flag::C) as u32) << 31)
                 }
             },
@@ -1043,7 +1041,7 @@ impl CPU{
     // returns extra cycle count. Stores the result into self.operand2. Stores shifter carry into self.shifter_carry.  
     fn process_operand2(&mut self) -> u32 {
         self.shifter_carry = self.read_flag(Flag::C) as u32;
-        let is_immediate = (self.instr >> 25) & 1 != 0;
+        let is_immediate = (self.instr >> 25) & 1 > 0;
         // immediate value is used
         if is_immediate {
             self.process_immediate_rotate()
@@ -1730,7 +1728,7 @@ impl CPU{
         }
         let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
         self.actual_pc = res.0;
-        print!(" actual_pc: {:#x}", self.actual_pc);
+        //print!(" actual_pc: {:#x}", self.actual_pc);
         self.increment_pc = false;
         3
     }

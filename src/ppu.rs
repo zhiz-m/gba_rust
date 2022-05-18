@@ -1,12 +1,46 @@
 use super::{
-    frontend::{
-        ScreenBuffer, Pixel
-    },
     bus::Bus,
 };
 
+#[derive(Clone, Copy)]
+pub struct Pixel {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Pixel{
+    pub fn new(r: u8, g: u8, b: u8) -> Pixel{
+        assert!(r < 32 && g < 32 && b < 32);
+        return Pixel { r, g, b }
+    }
+
+    pub fn to_float(&self) -> (f32, f32, f32) {
+        (self.r as f32 / 32., self.g as f32 / 32., self.b as f32 / 32.)
+    }
+}
+
+#[derive(Clone)]
+pub struct ScreenBuffer {
+    buffer: Vec<Vec<Pixel>>,
+}
+
+impl ScreenBuffer{
+    pub fn new() -> ScreenBuffer{
+        return ScreenBuffer{
+            buffer: vec![vec![Pixel::new(0,0,0); 240]; 160],
+        }
+    }
+    pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel){
+        self.buffer[row][col] = pixel;
+    }
+    pub fn read_pixel(&self, row: usize, col: usize) -> Pixel{
+        return self.buffer[row][col];
+    }
+}
+
+
 pub struct PPU {
-    clock_total: u64,
     clock_cur: u32,
 
     buffer: ScreenBuffer,
@@ -23,7 +57,6 @@ pub struct PPU {
 impl PPU {
     pub fn new() -> PPU {
         PPU{
-            clock_total: 0,
             clock_cur: 960, // clocks needed to process first scanline
 
             buffer: ScreenBuffer::new(),
@@ -151,7 +184,6 @@ impl PPU {
             addr += 0x200;
         }
         self.process_15bit_colour(bus.read_halfword(addr as usize))
-        //Pixel::new(31,0,0)
     }
 
     /*
