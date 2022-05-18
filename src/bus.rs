@@ -37,7 +37,7 @@ impl Bus {
         res
     }
 
-    pub fn read_byte(&mut self, addr: usize) -> u8 {
+    pub fn read_byte(&self, addr: usize) -> u8 {
         self.mem[addr]
     }
 
@@ -56,16 +56,16 @@ impl Bus {
     }
 
     pub fn store_byte(&mut self, addr: usize, val: u8) {
-        if addr >= 0x6000000 && addr <= 0x06017FFF{
-            println!("  addr : {:#x}, val: {:#x}", addr, val);
-        }
+        //if addr >= 0x6000000 && addr <= 0x06017FFF{
+        //    panic!("  addr : {:#x}, val: {:#x}", addr, val);
+        //}
         self.mem[addr] = val;
     }
 
     pub fn store_halfword(&mut self, addr: usize, val: u16) {
-        if addr >= 0x6000000 && addr <= 0x06017FFF{
-            println!("  addr : {:#x}, val: {:#x}", addr, val);
-        }
+        //if addr >= 0x6000000 && addr <= 0x06017FFF{
+        //    panic!("  addr : {:#x}, val: {:#x}", addr, val);
+        //}
         assert!(addr & 1 == 0);
         self.mem[addr] = (val & 0b11111111) as u8;
         self.mem[addr + 1] = ((val >> 8) & 0b11111111) as u8;
@@ -77,9 +77,9 @@ impl Bus {
     }
 
     pub fn store_word_unaligned(&mut self, addr: usize, val: u32) {
-        if addr >= 0x6000000 && addr <= 0x06017FFF{
-            println!("  addr : {:#x}, val: {:#x}", addr, val);
-        }
+        //if addr >= 0x6000000 && addr <= 0x06017FFF{
+        //    panic!("  addr : {:#x}, val: {:#x}", addr, val);
+        //}
         self.mem[addr] = (val & 0b11111111) as u8;
         self.mem[addr + 1] = ((val >> 8) & 0b11111111) as u8;
         self.mem[addr + 2] = ((val >> 16) & 0b11111111) as u8;

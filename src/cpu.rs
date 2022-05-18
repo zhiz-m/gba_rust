@@ -57,7 +57,7 @@ pub struct CPU{
     increment_pc: bool,
 }
 
-const DEBUG: bool = true;
+const DEBUG: bool = false;
 
 // ---------- misc
 fn debug(msg: &str) {
@@ -77,9 +77,10 @@ impl CPU{
             reg_dest: 0,
             //actual_pc: 0x08000000,
             actual_pc: 0x80002f0,
+            //actual_pc: 0,
 
             instr_set: InstructionSet::Arm,
-            op_mode: OperatingMode::Usr,
+            op_mode: OperatingMode::Svc,
 
             reg_map: HashMap::from([
                 (OperatingMode::Usr, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13, Register::R14, Register::R15]),
@@ -156,8 +157,8 @@ impl CPU{
                 self.execute_ldr_str(bus)
             }
             else if (self.instr >> 25) & 0b111 == 0 && 
-                ((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
-                ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1) {
+                (((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
+                ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1)) {
                     debug("        halfword_signed_transfer");
                 self.execute_halfword_signed_transfer(bus)
             }
@@ -217,7 +218,8 @@ impl CPU{
     fn execute_branch(&mut self) -> u32 {
         // link bit set
         if (self.instr >> 24) & 1 == 1 {
-            self.reg[Register::R14 as usize] = self.actual_pc + 4;
+            self.set_reg(14, self.actual_pc + 4);
+            //println!("   actual_pc: {:#x}, reg14: {:#x}", self.actual_pc, self.reg[Register::R14 as usize]);
         }
         let mut offset = (self.instr << 8) >> 6;
         if (offset >> 25) & 1 == 1 {
@@ -284,13 +286,14 @@ impl CPU{
             self.set_flag(Flag::C, (self.operand1 >> 31 > 0 || self.operand2 >> 31 > 0) && res >> 31 == 0);
             self.set_flag(Flag::V, (self.operand1 >> 31 == self.operand2 >> 31) && res >> 31 != self.operand1 >> 31);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
     fn op_add(&mut self) -> u32 {
-        if self.reg_dest == 0 {
-            println!("add PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
-        }
+        //if self.reg_dest == 0 {
+        //    println!("add PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
+        //}
         let res = Wrapping(self.operand1) + Wrapping(self.operand2);
         let res = res.0;
         self.set_reg(self.reg_dest, res);
@@ -300,6 +303,7 @@ impl CPU{
             self.set_flag(Flag::C, (self.operand1 >> 31 > 0 || self.operand2 >> 31 > 0) && res >> 31 == 0);
             self.set_flag(Flag::V, (self.operand1 >> 31 == self.operand2 >> 31) && res >> 31 != self.operand1 >> 31);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -311,6 +315,7 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -322,6 +327,7 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -339,7 +345,7 @@ impl CPU{
 
     fn op_cmp(&mut self) -> u32 {
         let res = Wrapping(self.operand1) - Wrapping(self.operand2);
-        print!(" op1: {}, op2: {}, res: {}, set_cond: {}", self.operand1, self.operand2, res, self.dataproc_set_cond());
+        //print!(" op1: {}, op2: {}, res: {}, set_cond: {}", self.operand1, self.operand2, res, self.dataproc_set_cond());
         let res = res.0;
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
@@ -358,6 +364,7 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -374,6 +381,7 @@ impl CPU{
             self.set_flag(Flag::Z, self.operand2 == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(self.operand2);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -385,6 +393,7 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -396,6 +405,7 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -409,6 +419,7 @@ impl CPU{
             self.set_flag(Flag::C, !(self.operand1 > self.operand2));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand1 >> 31);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -430,6 +441,7 @@ impl CPU{
                 self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -451,6 +463,7 @@ impl CPU{
                 self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -464,6 +477,7 @@ impl CPU{
             self.set_flag(Flag::C, !(self.operand1 > self.operand2));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand2 >> 31);
         }
+        self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
     }
 
@@ -486,6 +500,17 @@ impl CPU{
         }
         0
     }
+
+    fn _op_set_pc(&mut self, res: u32) {
+        if self.reg_dest == Register::R15 as u32 {
+            self.actual_pc = res;
+            self.increment_pc = false;
+            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                self.reg[*reg as usize] = self.reg[*reg as usize];
+            }
+        }
+    }
+
     // ---------- MRS and MSR
     fn execute_mrs_psr2reg(&mut self) -> u32 {
         let reg = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
@@ -660,7 +685,7 @@ impl CPU{
             },
             // register -> memory, word
             (false, false) => {
-                let addr = (addr >> 2) << 2;
+                //let addr = (addr >> 2) << 2;
                 let res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
                 bus.store_word(addr, res);
                 cycles += 2;
@@ -819,10 +844,10 @@ impl CPU{
         let mut addr = (addr as usize >> 2) << 2;
 
         let delt = match (pre, U) {
-            (true, true) => 1,
+            (true, true) => 4,
             (false, true) => 0,
             (true, false) => 0,
-            (false, false) => 1,
+            (false, false) => 4,
         };
 
         io::stdout().flush().unwrap();
@@ -831,7 +856,7 @@ impl CPU{
             if (1 << i) & reg_list > 0 {
                 let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
                 if L {
-                    self.reg[reg as usize] = bus.read_word_unaligned(addr + delt);
+                    self.reg[reg as usize] = bus.read_word(addr + delt);
                     if i == 15 {
                         self.reg[reg as usize] &= 0xfffffffc;
                         // NOTE: may not be correct, maybe comment out
@@ -845,7 +870,7 @@ impl CPU{
                     if i == 15 {
                         res += 4;
                     }
-                    bus.store_word_unaligned(addr + delt, res);
+                    bus.store_word(addr + delt, res);
                 }
                 
                 addr += 4;
@@ -1680,7 +1705,7 @@ impl CPU{
             let mut offset = (self.instr & 0b11111111) << 1;
             //print!(" offset {:#014b}", offset);
             if (offset >> 8) & 1 > 0 {
-                offset |= !0 & 0b000000000;
+                offset |= (!0) << 9;
             }
             let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
             self.actual_pc = res.0;
@@ -1695,10 +1720,12 @@ impl CPU{
     fn execute_thumb_uncond_branch(&mut self) -> u32 {
         let mut offset = (self.instr & 0b11111111111) << 1;
         if (offset >> 11) & 1 > 0 {
-            offset |= !0 & 0b000000000000;
+            offset |= (!0) << 12;
+            print!(" offset: {:#x}, !0: {:#x}", offset, !0);
         }
         let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
         self.actual_pc = res.0;
+        print!(" actual_pc: {:#x}", self.actual_pc);
         self.increment_pc = false;
         3
     }

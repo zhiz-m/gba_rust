@@ -10,28 +10,151 @@ pub struct PPU {
     clock_cur: u32,
 
     buffer: ScreenBuffer,
+    buffer_ready: bool,
+
+    is_hblank: bool,
+    cur_line: u8, // current line being processed. 
+    cur_scanline: [Pixel; 240],
+
+    disp_cnt: u16,
+    disp_stat: u16,
 }
 
 impl PPU {
     pub fn new() -> PPU {
         PPU{
             clock_total: 0,
-            clock_cur: 0,
+            clock_cur: 960, // clocks needed to process first scanline
 
             buffer: ScreenBuffer::new(),
+            buffer_ready: false,
+
+            is_hblank: false,
+            cur_line: 0,
+            cur_scanline: [Pixel::new(0,0,0); 240],
+
+            disp_cnt: 0,
+            disp_stat: 0,
         }
     }
 
     pub fn clock(&mut self, bus: &mut Bus) -> Option<ScreenBuffer> {
-        let mut res = None;
+        self.buffer_ready = false;
+
+        // may clock more than once per call to this function
+        // only happens when transitioning to vblank
         if self.clock_cur == 0{
             self.clock_cur += self._clock(bus);
-            res = Some(self.buffer.clone());
         }
+
+        assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
+
+        if self.buffer_ready{
+            Some(self.buffer.clone())
+        }
+        else{
+            None
+        }
+    }
+
+    fn _clock(&mut self, bus: &mut Bus) -> u32 {
+        self.disp_cnt = bus.read_halfword(0x04000000);
+        self.disp_stat = bus.read_halfword(0x04000004);
+
+        let res = 
+
+        if self.cur_line >= 160 {
+            self.cur_line += 1;
+            if self.cur_line == 228 {
+                self.is_hblank = false;
+                self.cur_line = 0;
+                960
+            }
+            else{
+                1232
+            }
+        }
+        else if !self.is_hblank {
+            self.process_scanline(bus);
+            for j in 0..240 {
+                self.buffer.write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
+            }
+            println!("  scanline processed: {}", self.cur_line);
+
+            self.is_hblank = true;
+
+            272
+        }
+        else{
+            self.is_hblank = false;
+            self.cur_line += 1;
+
+            if self.cur_line == 160{
+                self.buffer_ready = true;
+                1232
+            }
+            else{
+                960
+            }
+        };
+        // store VCOUNT
+        bus.store_byte(0x04000006, self.cur_line);
+
+        self.disp_stat &= !0b111;
+        if self.cur_line >= 160 {
+            self.disp_stat |= 0b001;
+            //panic!();
+        }
+        if self.is_hblank{
+            self.disp_stat |= 0b010;
+        }
+        if self.cur_line as u16 == self.disp_stat >> 8{
+            self.disp_stat |= 0b100;
+            // TODO: process interrupt if needed (https://www.coranac.com/tonc/text/video.htm)
+        }
+
+        bus.store_halfword(0x04000004, self.disp_stat);
+
         res
     }
 
+    fn process_scanline(&mut self, bus: &Bus) {
+        match self.disp_cnt & 0b111 {
+            4 => self.process_bg_mode_4(bus),
+            _ => {}
+        }
+    }
+
+    fn process_bg_mode_4(&mut self, bus: &Bus) {
+        let mut addr = 0x06000000 + self.cur_line as u32 * 160;
+
+        // frame number
+        if self.disp_cnt >> 4 > 0 {
+            addr += 0x9600;
+        }
+
+        for i in 0..240 {
+            self.cur_scanline[i] = self.process_palette_colour(bus.read_byte(addr as usize + i), false, bus);
+        }
+    }
+
+    // ------- helper functions
+
+    fn process_15bit_colour(&self, halfword: u16) -> Pixel {
+        Pixel::new((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
+    }
+
+    fn process_palette_colour(&self, palette_no: u8, is_sprite: bool, bus: &Bus) -> Pixel {
+        let mut addr = 0x05000000 + palette_no as u32 * 2;
+        if is_sprite{
+            addr += 0x200;
+        }
+        self.process_15bit_colour(bus.read_halfword(addr as usize))
+        //Pixel::new(31,0,0)
+    }
+
+    /*
     // returns number of clock cycles
     fn _clock(&mut self, bus: &Bus) -> u32 {
         let mut i = 0;
@@ -64,4 +187,5 @@ impl PPU {
 
         100
     }
+    */
 }

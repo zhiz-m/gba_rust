@@ -10,17 +10,19 @@ use piston::window::WindowSettings;
 
 #[derive(Clone, Copy)]
 pub struct Pixel {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
 }
 
 impl Pixel{
-    pub fn new(r: f32, g: f32, b: f32) -> Pixel{
-        //if r > 0. || b > 0. || g > 0.{
-        //    print!("colour");
-        //}
+    pub fn new(r: u8, g: u8, b: u8) -> Pixel{
+        assert!(r < 32 && g < 32 && b < 32);
         return Pixel { r, g, b }
+    }
+
+    pub fn to_float(&self) -> (f32, f32, f32) {
+        (self.r as f32 / 32., self.g as f32 / 32., self.b as f32 / 32.)
     }
 }
 
@@ -32,7 +34,7 @@ pub struct ScreenBuffer {
 impl ScreenBuffer{
     pub fn new() -> ScreenBuffer{
         return ScreenBuffer{
-            buffer: vec![vec![Pixel::new(0.,0.,0.); 240]; 160],
+            buffer: vec![vec![Pixel::new(0,0,0); 240]; 160],
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel){
@@ -96,8 +98,8 @@ impl Frontend{
                             let transform = c
                                 .transform
                                 .trans(i as f64 * 2., j as f64 * 2.);
-                            let pixel = self.last_buff.read_pixel(j, i);
-                            rectangle([pixel.r, pixel.g, pixel.b, 1.], square, transform, gl);
+                            let pixel = self.last_buff.read_pixel(j, i).to_float();
+                            rectangle([pixel.0, pixel.1, pixel.2, 1.], square, transform, gl);
                         }
                     }
                 });
