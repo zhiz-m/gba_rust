@@ -63,12 +63,12 @@ impl Bus {
     }
 
     pub fn store_halfword(&mut self, addr: usize, val: u16) {
-        //if addr >= 0x6000000 && addr <= 0x06017FFF{
-        //    panic!("  addr : {:#x}, val: {:#x}", addr, val);
-        //}
         assert!(addr & 1 == 0);
         self.mem[addr] = (val & 0b11111111) as u8;
         self.mem[addr + 1] = ((val >> 8) & 0b11111111) as u8;
+        //if addr >= 0x5000000 && addr <= 0x050003FF{
+        //    println!("  addr : {:#x}, val: {:#018b}, reval: {:#018b}", addr, val, self.read_halfword(addr));
+        //}
     }
 
     pub fn store_word(&mut self, addr: usize, val: u32) {

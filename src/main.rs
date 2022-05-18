@@ -36,12 +36,40 @@ impl Emulator {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
-            
+            if clock % 16000000 < 100 {
+                //println!("  pc: {:#x}, instr: {:#034b}", self.cpu.actual_pc, self.cpu.instr);
+                //self.cpu.debug = true;
+            }
+            else{
+                self.cpu.debug = false;
+            }
             self.cpu.clock(&mut self.bus);
+
+            /*let addr = 0x6000000 + 240 * 100;
+            for i in 0..240{
+                self.bus.store_byte(addr + i, 2);
+                self.bus.store_byte(addr + 240 + i, 2);
+            }
+
+            self.bus.store_halfword(0x5000000, 31);
+            */
+            /*
+            let mut addr = 0x5000000;
+            for i in 0..6{
+                let res = self.bus.read_halfword(addr + i*2);
+                if res > 0 {
+                    println!(" i: {}, res: {:#017b}", i, res);
+                }
+            }
+            */
             if let Some(buff) = self.ppu.clock(&mut self.bus){
                 if let Err(why) = self.buff_sender.send(buff){
                     println!("                 buff sending error: {}", why.to_string());
                 }
+            }
+            
+            if clock % 16000000 == 100 {
+                println!();
             }
 
             clock += 1;

@@ -80,7 +80,7 @@ impl PPU {
             for j in 0..240 {
                 self.buffer.write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
             }
-            println!("  scanline processed: {}", self.cur_line);
+            //println!("  scanline processed: {}", self.cur_line);
 
             self.is_hblank = true;
 
@@ -127,15 +127,15 @@ impl PPU {
     }
 
     fn process_bg_mode_4(&mut self, bus: &Bus) {
-        let mut addr = 0x06000000 + self.cur_line as u32 * 160;
+        let mut addr = 0x06000000 + self.cur_line as usize * 240;
 
         // frame number
-        if self.disp_cnt >> 4 > 0 {
+        if (self.disp_cnt >> 4) & 1 > 0 {
             addr += 0x9600;
         }
 
         for i in 0..240 {
-            self.cur_scanline[i] = self.process_palette_colour(bus.read_byte(addr as usize + i), false, bus);
+            self.cur_scanline[i] = self.process_palette_colour(bus.read_byte(addr + i), false, bus);
         }
     }
 

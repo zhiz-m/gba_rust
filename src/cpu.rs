@@ -39,7 +39,7 @@ enum Flag{
 
 pub struct CPU{
     reg: [u32; 37],
-    instr: u32,
+    pub instr: u32,
     shifter_carry: u32, // 0 or 1 only
     operand1: u32,
     operand2: u32,
@@ -55,16 +55,14 @@ pub struct CPU{
     clock_total: u64,
     clock_cur: u32,
     increment_pc: bool,
+
+    pub debug: bool,
 }
 
 const DEBUG: bool = false;
 
 // ---------- misc
-fn debug(msg: &str) {
-    if DEBUG{
-        print!("{}", msg);
-    }
-}
+
 
 impl CPU{
     pub fn new() -> CPU {
@@ -101,6 +99,8 @@ impl CPU{
             clock_total: 0,
             clock_cur: 0,
             increment_pc: true,
+
+            debug: false,
         };
         res.set_reg(13, 0x03007FF0);
         res
@@ -143,55 +143,55 @@ impl CPU{
             cur_cycles +=
             // branch and exchange shares 0b000 with execute_dataproc. 
             if (self.instr << 4) >> 8 == 0b000100101111111111110001{
-                debug("        BX");
+                self.debug("        BX");
                 self.execute_branch_exchange()
+            }
+            // multiply and multiply_long share 0b000 with execute_dataproc. 
+            else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
+                self.debug("        MUL, MLA");
+                self.execute_multiply()
+            }
+            else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
+                self.debug("        multiply long");
+                self.execute_multiply_long()
             }
             // load and store instructions
             // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
-                debug("        SWP");
+                self.debug("        SWP");
                 self.execute_swp(bus)
             }
             else if (self.instr >> 26) & 0b11 == 1 {
-                debug("        LDR, STR");
+                self.debug("        LDR, STR");
                 self.execute_ldr_str(bus)
             }
             else if (self.instr >> 25) & 0b111 == 0 && 
                 (((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
                 ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1)) {
-                    debug("        halfword_signed_transfer");
+                    self.debug("        halfword_signed_transfer");
                 self.execute_halfword_signed_transfer(bus)
             }
             // msr and mrs
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
-                debug("        MRS");
+                self.debug("        MRS");
                 self.execute_mrs_psr2reg()
             } 
             else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
-                debug("        MSR reg2psr");
+                self.debug("        MSR reg2psr");
                 self.execute_msr_reg2psr()
             } 
             else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
-                debug("        MSR reg imm2psr");
+                self.debug("        MSR reg imm2psr");
                 self.execute_msr_reg_imm2psr()
             } 
-            // multiply and multiply_long share 0b000 with execute_dataproc. 
-            else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
-                debug("        MUL, MLA");
-                self.execute_multiply()
-            }
-            else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
-                debug("        multiply long");
-                self.execute_multiply_long()
-            }
             else{
                 match (self.instr >> 25) & 0b111 {
                     0b000 | 0b001 => {
-                        debug("        dataproc");
+                        self.debug("        dataproc");
                         self.execute_dataproc()
                     },
                     0b101 => {
-                        debug("        branch");
+                        self.debug("        branch");
                         self.execute_branch()
                     },
                     0b100 => self.execute_block_data_transfer(bus),
@@ -201,7 +201,7 @@ impl CPU{
                     }
                 }
             };
-            debug("\n\n");
+            self.debug("\n\n");
         }
         else{
             cur_cycles = 1;
@@ -369,9 +369,9 @@ impl CPU{
     }
 
     fn op_mov(&mut self) -> u32 {
-        if self.reg_dest == 0 {
-            println!("PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
-        }
+        //if self.reg_dest == 0 {
+        //    println!("PC: {:#010x}\n  instr: {:#034b}\n   operand2: {:#x}", self.actual_pc, self.instr, self.operand2);
+        //}
         //if self.reg_dest == 8 && self.operand2 == 16 {
         //    println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
         //}
@@ -664,7 +664,8 @@ impl CPU{
         };
 
         // P flag
-        if (self.instr >> 24) & 1 == 1{
+        let P = (self.instr >> 24) & 1 == 1;
+        if P {
             addr = offset_addr;
         }
 
@@ -723,7 +724,8 @@ impl CPU{
         };
 
         // W flag
-        if (self.instr >> 21) & 1 == 1 {
+        if !P || (self.instr >> 21) & 1 == 1 {
+        //if (self.instr >> 21) & 1 == 1 {
             self.set_reg(base_reg, offset_addr);
         };
 
@@ -741,12 +743,12 @@ impl CPU{
         else{
             let hi = (self.instr >> 8) & 0b1111;
             let lo = self.instr & 0b1111;
-            lo + hi << 4
+            lo + (hi << 4)
         };
         // base reg
         let base_reg = (self.instr >> 16) & 0b1111;
         let mut addr =  self.read_reg(base_reg);
-
+        self.debug(&format!(" org_addr: {:#x},", addr));
         // U flag
         let offset_addr = if (self.instr >> 23) & 1 == 0{
             addr - offset
@@ -756,7 +758,8 @@ impl CPU{
         };
 
         // P flag
-        if (self.instr >> 24) & 1 == 1{
+        let P = (self.instr >> 24) & 1 == 1;
+        if P{
             addr = offset_addr;
         }
 
@@ -800,7 +803,9 @@ impl CPU{
         };
 
         // W flag
-        if (self.instr >> 21) & 1 == 1 {
+        self.debug(&format!(" offset_addr: {:#x},", offset_addr));
+        if !P || (self.instr >> 21) & 1 == 1 {
+        //if (self.instr >> 21) & 1 == 1 {
             self.set_reg(base_reg, offset_addr);
         };
 
@@ -852,6 +857,10 @@ impl CPU{
 
         io::stdout().flush().unwrap();
 
+        if W {
+            self.set_reg(base_reg, offset_addr);
+        }
+
         for i in 0..16 {
             if (1 << i) & reg_list > 0 {
                 let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
@@ -879,10 +888,6 @@ impl CPU{
 
         if S && r15_appear && L {
             self.reg[Register::CPSR as usize] = self.reg[self.spsr_map[&self.op_mode] as usize];
-        }
-
-        if W {
-            self.set_reg(base_reg, offset_addr);
         }
 
         if L {
@@ -1078,77 +1083,77 @@ impl CPU{
 
         cur_cycles += 
         if (self.instr >> 11) & 0b11111 == 0b00011 {
-            debug("        thumb ADD SUB");
+            self.debug("        thumb ADD SUB");
             self.execute_thumb_add_sub_imm3()
         }
         else if (self.instr >> 10) & 0b111111 == 0b010000 {
-            debug("        thumb ALU general");
+            self.debug("        thumb ALU general");
             self.execute_thumb_alu_general()
         }
         else if (self.instr >> 10) & 0b111111 == 0b010001 {
-            debug("        thumb Hi reg operations or BX");
+            self.debug("        thumb Hi reg operations or BX");
             self.execute_thumb_hi_bx()
         }
         else if (self.instr >> 11) & 0b11111 == 0b01001 {
-            debug("        thumb pc relative load");
+            self.debug("        thumb pc relative load");
             self.execute_thumb_pc_relative_load(bus)
         }
         else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 0{
-            debug("        thumb load/store reg offset");
+            self.debug("        thumb load/store reg offset");
             self.execute_thumb_load_store_reg_offset(bus)
         }
         else if (self.instr >> 12) & 0b1111 == 0b0101 && (self.instr >> 9) & 1 == 1{
-            debug("        thumb load/store reg signed byte/halfword");
+            self.debug("        thumb load/store reg signed byte/halfword");
             self.execute_thumb_load_store_signed(bus)
         }
         else if (self.instr >> 8) & 0b11111111 == 0b10110000{
-            debug("        thumb sp offset");
+            self.debug("        thumb sp offset");
             self.execute_thumb_sp_offset()
         }
         else if (self.instr >> 9) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111 == 0b1011{
-            debug("        thumb push/pop");
+            self.debug("        thumb push/pop");
             self.execute_thumb_push_pop(bus)
         }
         else if (self.instr >> 11) & 0b11111 == 0b11100 {
-            debug("        thumb uncond branch");
+            self.debug("        thumb uncond branch");
             self.execute_thumb_uncond_branch()
         }
         else{
             match (self.instr >> 12) & 0b1111 {
                 0b0001 | 0b0000 => {
-                    debug("        thumb LSL LSR ASR imm5");
+                    self.debug("        thumb LSL LSR ASR imm5");
                     self.execute_thumb_lsl_lsr_asr_imm5()
                 },
                 0b0010 | 0b0011 => {
-                    debug("        thumb MOV CMP ADD SUB imm8");
+                    self.debug("        thumb MOV CMP ADD SUB imm8");
                     self.execute_thumb_mov_cmp_add_sub_imm8()
                 },
                 0b0111 | 0b0110 => {
-                    debug("        thumb load/store reg imm5");
+                    self.debug("        thumb load/store reg imm5");
                     self.execute_thumb_load_store_imm5(bus)
                 },
                 0b1000 => {
-                    debug("        thumb load/store halfword imm5");
+                    self.debug("        thumb load/store halfword imm5");
                     self.execute_thumb_load_store_halfword_imm5(bus)
                 },
                 0b1001 => {
-                    debug("        thumb load/store word sp offset");
+                    self.debug("        thumb load/store word sp offset");
                     self.execute_thumb_load_store_sp(bus)
                 },
                 0b1010 => {
-                    debug("        thumb load address sp/pc");
+                    self.debug("        thumb load address sp/pc");
                     self.execute_thumb_load_address()
                 },
                 0b1100 => {
-                    debug("        thumb multiple load/store");
+                    self.debug("        thumb multiple load/store");
                     self.execute_thumb_load_store_multiple(bus)
                 },
                 0b1101 => {
-                    debug("        thumb cond branch");
+                    self.debug("        thumb cond branch");
                     self.execute_thumb_cond_branch()
                 }
                 0b1111 => {
-                    debug("        thumb long branch and link");
+                    self.debug("        thumb long branch and link");
                     self.execute_thumb_uncond_branch_link()
                 }
                 _ => {
@@ -1161,7 +1166,7 @@ impl CPU{
             self.actual_pc += 0b010;
         }
 
-        debug("\n\n");
+        self.debug("\n\n");
 
         cur_cycles
     }
@@ -1756,8 +1761,8 @@ impl CPU{
     }
 
     // ---------- misc
-    pub fn print_pc(&self) {
-        if !DEBUG{
+    fn print_pc(&self) {
+        if !self.debug{
             //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
             return;
         }
@@ -1774,6 +1779,12 @@ impl CPU{
         println!();
         print!("N: {}, Z: {}, C: {}, V: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V));
         println!();
+    }
+
+    fn debug(&self, msg: &str) {
+        if self.debug{
+            print!("{}", msg);
+        }
     }
 
     // ---------- read and set helpers
