@@ -24,7 +24,7 @@ impl Bus {
         };
 
         // set key registers to 1
-        res.store_halfword(0x04000130, 0b1111111111);
+        //res.store_halfword(0x04000130, 0b1111111111);
 
         /*   
         let x:u32 = 0b11100011101000000000101100000001;

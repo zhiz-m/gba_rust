@@ -3,78 +3,59 @@ mod cpu;
 mod ppu;
 mod frontend;
 mod config;
-mod key_input;
+mod input_handler;
 
 use bus::Bus;
 use cpu::CPU;
+use input_handler::KeyInput;
 use ppu::{
     PPU, ScreenBuffer
 };
 use frontend::{
     Frontend
 };
+use input_handler::InputHandler;
 
-use std::{env, thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{self, Sender}};
+use std::{env, thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{self, Sender, Receiver}};
 
 struct Emulator {
     bus: Bus,
     cpu: CPU,
     ppu: PPU,
+    input_handler: InputHandler,
 
-    buff_sender: Sender<ScreenBuffer>,
+    screenbuf_sender: Sender<ScreenBuffer>,
+    key_receiver: Receiver<(KeyInput,bool)>,
 }
 
 impl Emulator {
-    pub fn new(rom_path: String, buff_sender: Sender<ScreenBuffer>) -> Emulator {
-        Emulator { 
+    pub fn new(rom_path: String, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> Emulator {
+        let mut res = Emulator { 
             bus: Bus::new(rom_path), 
             cpu: CPU::new(), 
             ppu: PPU::new(), 
-            buff_sender
-        }
+            input_handler: InputHandler::new(),
+            screenbuf_sender,
+            key_receiver,
+        };
+
+        // zero out input registers
+        res.input_handler.process_input(&res.key_receiver, &mut res.bus);
+
+        res
     }
 
     pub fn start_loop(&mut self) -> Result<(), &'static str> {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
-            if clock % 16000000 < 100 {
-                //println!("  pc: {:#x}, instr: {:#034b}", self.cpu.actual_pc, self.cpu.instr);
-                //self.cpu.debug = true;
-            }
-            else{
-                //self.cpu.debug = false;
-            }
             self.cpu.clock(&mut self.bus);
-
-            /*let addr = 0x6000000 + 240 * 100;
-            for i in 0..240{
-                self.bus.store_byte(addr + i, 2);
-                self.bus.store_byte(addr + 240 + i, 2);
-            }
-
-            self.bus.store_halfword(0x5000000, 31);
-            */
-            /*
-            let mut addr = 0x5000000;
-            for i in 0..6{
-                let res = self.bus.read_halfword(addr + i*2);
-                if res > 0 {
-                    println!(" i: {}, res: {:#017b}", i, res);
-                }
-            }
-            */
             if let Some(buff) = self.ppu.clock(&mut self.bus){
-                if let Err(why) = self.buff_sender.send(buff){
-                    println!("                 buff sending error: {}", why.to_string());
+                if let Err(why) = self.screenbuf_sender.send(buff){
+                    println!("   screenbuf sending error: {}", why.to_string());
                 }
+                self.input_handler.process_input(&self.key_receiver, &mut self.bus);
             }
-            
-            /*
-            if clock % 16000000 == 100 {
-                println!();
-            }
-            */
 
             clock += 1;
 
@@ -93,9 +74,11 @@ fn main() {
     let rom_path = env::args().nth(1).unwrap();
 
     let (tx, rx) = mpsc::channel();
+    let (tx2, rx2) = mpsc::channel();
 
-    let mut emulator = Emulator::new(rom_path, tx);
-    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx);
+
+    let mut emulator = Emulator::new(rom_path, tx, rx2);
+    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2);
 
     thread::spawn(move || {
         emulator.start_loop().unwrap();

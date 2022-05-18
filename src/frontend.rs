@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, Sender};
 
 use glutin_window::GlutinWindow as Window;
 use graphics::{clear, Transformed, rectangle};
@@ -10,12 +9,12 @@ use piston::event_loop::{EventSettings, Events};
 use piston::input::{RenderEvent};
 use piston::window::WindowSettings;
 
-use super::{
+use crate::{
     ppu::{
         ScreenBuffer,  
     },
-    key_input::{
-        KeyBuffer, KeyInput
+    input_handler::{
+        KeyInput
     }
 };
 
@@ -28,12 +27,13 @@ pub struct Frontend{
     screenbuf_receiver: Receiver<ScreenBuffer>,
     last_screenbuf: ScreenBuffer,
 
-    keybuf: KeyBuffer,
     key_map: HashMap<Key, KeyInput>,
+    key_sender: Sender<(KeyInput, bool)>
+
 }
 
 impl Frontend{
-    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>) -> Frontend{
+    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>) -> Frontend{
         Frontend { 
             gl: None,
             window: None,
@@ -43,7 +43,6 @@ impl Frontend{
             screenbuf_receiver,
             last_screenbuf: ScreenBuffer::new(),
 
-            keybuf: KeyBuffer::new(),
             key_map: HashMap::from([
                 (Key::Z, KeyInput::A),
                 (Key::X, KeyInput::B),
@@ -56,6 +55,7 @@ impl Frontend{
                 (Key::Right, KeyInput::Right),
                 (Key::Left, KeyInput::Left),
             ]),
+            key_sender,
         }
     }
     
@@ -77,7 +77,7 @@ impl Frontend{
     
     pub fn render(&mut self) -> Result<bool, &'static str>{
         if let Some(e) = self.events.as_mut().unwrap().next(self.window.as_mut().unwrap()){
-            if let Ok(buf) = self.screenbuf_receiver.recv_timeout(Duration::from_millis(1)) {
+            while let Ok(buf) = self.screenbuf_receiver.try_recv() {
                 self.last_screenbuf = buf;
             }
             if let Some(args) = e.render_args(){
@@ -99,12 +99,16 @@ impl Frontend{
             }
             if let Some(Button::Keyboard(key)) = e.press_args(){
                 if let Some(key_input) = self.key_map.get(&key) {
-                    self.keybuf.press_key(*key_input);
+                    if let Err(why) = self.key_sender.send((*key_input, true)){
+                        println!("   keybuf sending error: {}", why.to_string());
+                    }
                 }
             }
             if let Some(Button::Keyboard(key)) = e.release_args(){
                 if let Some(key_input) = self.key_map.get(&key) {
-                    self.keybuf.release_key(*key_input);
+                    if let Err(why) = self.key_sender.send((*key_input, false)){
+                        println!("   keybuf sending error: {}", why.to_string());
+                    }
                 }
             }
             return Ok(true);
