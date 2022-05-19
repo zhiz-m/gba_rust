@@ -671,6 +671,7 @@ impl CPU{
 
     // ---------- data transfers
     fn execute_ldr_str(&mut self, bus: &mut Bus) -> u32 {
+        //self.instr &= !(1 << 21);
         let mut cycles = 0;
         // I flag
         let offset = if (self.instr >> 25) & 1 > 0 {
@@ -700,14 +701,27 @@ impl CPU{
             addr = offset_addr;
         }
 
-        let addr = addr as usize;
-
         let L = (self.instr >> 20) & 1 == 1;
         let B = (self.instr >> 22) & 1 == 1;
+
+        let rotate = (addr & 0b11) * 8;
+        
+        let addr = if !B {
+            (addr as usize) & !0b11
+        }
+        else{
+            addr as usize
+        };
 
         let reg = (self.instr >> 12) & 0b1111;
 
         //print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
+
+        // W flag
+        if !P || (self.instr >> 21) & 1 == 1 {
+        //if (self.instr >> 21) & 1 == 1 {
+            self.set_reg(base_reg, offset_addr);
+        };
 
         match (L,B) {
             // register -> memory, byte
@@ -730,7 +744,7 @@ impl CPU{
             },
             // memory -> register, word
             (true, false) => {
-                let mut res = bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11));
+                let mut res = bus.read_word(addr).rotate_right(rotate);
                 if reg == Register::R15 as u32 {
                     res &= 0xfffffffc;
                     self.actual_pc = res;
@@ -752,12 +766,6 @@ impl CPU{
                 */
                 cycles += 3;
             },
-        };
-
-        // W flag
-        if !P || (self.instr >> 21) & 1 == 1 {
-        //if (self.instr >> 21) & 1 == 1 {
-            self.set_reg(base_reg, offset_addr);
         };
 
         //if L && reg == Register::R15 as u32 {
@@ -802,6 +810,11 @@ impl CPU{
 
         let reg = (self.instr >> 12) & 0b1111;
 
+        if !P || (self.instr >> 21) & 1 == 1 {
+        //if (self.instr >> 21) & 1 == 1 {
+            self.set_reg(base_reg, offset_addr);
+        };
+        
         match (L,S,H) {
             // register -> memory, byte (STRH)
             (false, false, true) => {
@@ -835,10 +848,7 @@ impl CPU{
 
         // W flag
         self.debug(&format!(" offset_addr: {:#x},", offset_addr));
-        if !P || (self.instr >> 21) & 1 == 1 {
-        //if (self.instr >> 21) & 1 == 1 {
-            self.set_reg(base_reg, offset_addr);
-        };
+        
 
         if (L,S,H) == (false, false, true) {
             2
@@ -886,14 +896,12 @@ impl CPU{
             (false, false) => 4,
         };
 
-        io::stdout().flush().unwrap();
+        cnt = 0;
 
-        if W {
-            self.set_reg(base_reg, offset_addr);
-        }
-
+        //io::stdout().flush().unwrap();
         for i in 0..16 {
             if (1 << i) & reg_list > 0 {
+                
                 let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
                 if L {
                     self.reg[reg as usize] = bus.read_word(addr + delt);
@@ -905,18 +913,21 @@ impl CPU{
                     }
                 }
                 else{
-                    let mut res =  self.reg[reg as usize];
+                    let mut res = self.reg[reg as usize];
                     // account for pc being 12 bytes higher than current position
                     if i == 15 {
                         res += 4;
                     }
                     bus.store_word(addr + delt, res);
                 }
-                
+                if W && cnt == 0 {
+                    self.set_reg(base_reg, offset_addr);
+                }
                 addr += 4;
+                cnt += 1;
             }
         }
-
+        
         if S && r15_appear && L {
             self.reg[Register::CPSR as usize] = self.reg[self.spsr_map[&self.op_mode] as usize];
         }
