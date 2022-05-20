@@ -53,6 +53,7 @@ pub struct CPU{
 
     clock_cur: u32,
     increment_pc: bool,
+    thumb_modify_flags: bool,
 
     pub debug: bool,
 }
@@ -66,8 +67,8 @@ impl CPU{
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            //actual_pc: 0x08000000,
-            actual_pc: 0x80002f0,
+            actual_pc: 0x08000000,
+            //actual_pc: 0x080002f0,
             //actual_pc: 0,
 
             //op_mode: OperatingMode::Svc,
@@ -92,6 +93,7 @@ impl CPU{
 
             clock_cur: 0,
             increment_pc: true,
+            thumb_modify_flags: true,
 
             debug: false,
         };
@@ -220,7 +222,7 @@ impl CPU{
         if (offset >> 25) & 1 == 1 {
             offset |= 0b111111 << 26;
         }
-        self.actual_pc = self.read_pc() + offset;
+        self.actual_pc = (Wrapping(self.read_pc()) + Wrapping(offset)).0;
         self.increment_pc = false;
         3
     }
@@ -689,11 +691,12 @@ impl CPU{
 
         // U flag
         let offset_addr = if (self.instr >> 23) & 1 == 0{
-            addr - offset
+            Wrapping(addr) - Wrapping(offset)
         }
         else{
-            addr + offset
+            Wrapping(addr) + Wrapping(offset)
         };
+        let offset_addr = offset_addr.0;
 
         // P flag
         let P = (self.instr >> 24) & 1 == 1;
@@ -927,7 +930,7 @@ impl CPU{
                 cnt += 1;
             }
         }
-        
+
         if S && r15_appear && L {
             self.reg[Register::CPSR as usize] = self.reg[self.spsr_map[&self.op_mode] as usize];
         }
@@ -987,7 +990,8 @@ impl CPU{
     }
 
     fn dataproc_set_cond(&self) -> bool{
-        self.read_flag(Flag::T) || (self.instr >> 20) & 1 > 0
+        // check for thumb mode, so we can re-use the op_ methods for thumb 
+        (self.read_flag(Flag::T) && self.thumb_modify_flags) || (self.instr >> 20) & 1 > 0
     }
 
     // modifies self.operand2. returns number of extra cycles (0)
@@ -1137,6 +1141,7 @@ impl CPU{
         let mut cur_cycles = 0;
         
         self.increment_pc = true;
+        self.thumb_modify_flags = true;
 
         self.print_pc();
 
@@ -1252,29 +1257,49 @@ impl CPU{
     }
 
     fn op_thumb_lsl(&mut self) -> u32 {
-        let res = self.operand1 << self.operand2;
-        self.set_reg(self.reg_dest, res);
-
-        if self.operand2 > 32 {
-            self.set_flag(Flag::C, false);
+        let res = 
+        if self.operand2 == 0 {
+            self.operand1
         }
-        else if self.operand2 > 0 {
+        else if self.operand2 == 32 {
+            self.set_flag(Flag::C, self.operand1 & 1 > 0);
+            0
+        }
+        else if self.operand2 > 32 {
+            self.set_flag(Flag::C, false);
+            0
+        }
+        else {
             self.set_flag(Flag::C, (self.operand1 >> (32 - self.operand2)) & 1 > 0);
+            self.operand1 << self.operand2
         };
         self.set_flag(Flag::N, res >> 31 > 0);
         self.set_flag(Flag::Z, res == 0);
+
+        self.set_reg(self.reg_dest, res);
+
         0
     }
 
-    fn op_thumb_lsr(&mut self) -> u32 {
-        let res= self.operand1 >> self.operand2;
-        self.set_reg(self.reg_dest, res);
-        if self.operand2 == 0 {
-            self.operand2 = 32;
+    fn op_thumb_lsr(&mut self) -> u32 {        
+        let res = 
+        if self.operand2 == 0 || self.operand2 == 32 {
+            self.set_flag(Flag::C, (self.operand1 >> 31) & 1 > 0);
+            0
         }
-        self.set_flag(Flag::C, (self.operand1 >> (self.operand2 - 1)) & 1 > 0);
+        else if self.operand2 > 32 {
+            self.set_flag(Flag::C, false);
+            0
+        }
+        else{
+            self.set_flag(Flag::C, (self.operand1 >> (self.operand2 - 1)) & 1 > 0);
+            self.operand1 >> self.operand2
+        };
+        //self.set_flag(Flag::C, (self.operand1 >> (self.operand2 - 1)) & 1 > 0);
         self.set_flag(Flag::N, res >> 31 > 0);
         self.set_flag(Flag::Z, res == 0);
+
+        self.set_reg(self.reg_dest, res);
 
         0
     }
@@ -1386,6 +1411,7 @@ impl CPU{
                 self.op_tst();
             },
             0b1001 => {
+                self.operand1 = self.operand2;
                 self.operand2 = 0;
                 self.op_rsb();
             },
@@ -1458,6 +1484,7 @@ impl CPU{
     }
 
     fn execute_thumb_hi_bx(&mut self) -> u32 { 
+        self.thumb_modify_flags = false;
         self.reg_dest = self.instr & 0b111;
         if (self.instr >> 7) & 1 > 0{
             self.reg_dest += 8;
@@ -1509,13 +1536,13 @@ impl CPU{
             // register -> memory, word
             (false, false) => {
                 let res = self.read_reg(self.reg_dest);
-                bus.store_word(addr, res);
+                bus.store_word(addr & !(0b11), res);
                 2
             }
             // memory -> register, word
             (true, false) => {
-                let res = bus.read_word(addr);
-                self.set_reg(self.reg_dest, res);
+                let res = bus.read_word(addr & !(0b11));
+                self.set_reg(self.reg_dest, res.rotate_right((addr as u32 & 0b11) << 3));
                 3
             }
             // register -> memory, byte
@@ -1587,12 +1614,12 @@ impl CPU{
             // register -> memory, word
             (false, false) => {
                 let res = self.read_reg(self.reg_dest);
-                bus.store_word(addr, res);
+                bus.store_word(addr & (!0b11), res);
                 2
             }
             // memory -> register, word
             (true, false) => {
-                let res = bus.read_word(addr);
+                let res = bus.read_word(addr & (!0b11)).rotate_right((addr as u32 & 0b11) << 3);
                 self.set_reg(self.reg_dest, res);
                 3
             }
@@ -1660,7 +1687,7 @@ impl CPU{
         let offset = Wrapping((self.instr & 0b11111111) << 2);
 
         let res = match SP {
-            false => Wrapping(self.actual_pc) + Wrapping(4) + offset,
+            false => Wrapping(self.actual_pc & 0xfffffffc) + Wrapping(4) + offset,
             true => Wrapping(self.read_reg(13)) + offset,
         };
         self.set_reg(self.reg_dest, res.0);
@@ -1756,12 +1783,15 @@ impl CPU{
                     let res = bus.read_word(addr);
                     self.set_reg(i, res);
                 }
+                if cnt == 0 {
+                    self.set_reg(base_reg, addr as u32 + 4);
+                }
                 addr += 4;
                 cnt += 1;
             }
         }
 
-        self.set_reg(base_reg, addr as u32 + 4);
+        
 
         if L {
             cnt + 2
@@ -1778,7 +1808,7 @@ impl CPU{
             if (offset >> 8) & 1 > 0 {
                 offset |= (!0) << 9;
             }
-            let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
+            let res = Wrapping(self.actual_pc + 4) + Wrapping(offset);
             self.actual_pc = res.0;
             self.increment_pc = false;
             3
@@ -1815,10 +1845,10 @@ impl CPU{
                 self.set_reg(14, offset.0);
             }
             true => {
-                let offset = self.read_reg(14) + (offset << 1);
+                let offset = Wrapping(self.read_reg(14)) + Wrapping((offset << 1));
                 //print!(" value placed into R15: {:#010x}", offset);
                 self.set_reg(14, (self.actual_pc + 2) | 1);
-                self.actual_pc = offset;
+                self.actual_pc = offset.0;
                 self.increment_pc = false;
             }
         };
