@@ -98,6 +98,10 @@ impl CPU{
             debug: false,
         };
         res.set_reg(13, 0x03007FF0);
+        res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
+
+        // set CPSR for sys mode
+        res.set_cpsr(0b11111);
         res
     }
 
@@ -110,7 +114,9 @@ impl CPU{
                 true => self.decode_execute_instruction_thumb(bus)
             }
         }
-
+        if self.clock_cur == 0{
+            self.print_pc();
+        }
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
     }
@@ -140,6 +146,11 @@ impl CPU{
             if (self.instr << 4) >> 8 == 0b000100101111111111110001{
                 self.debug("        BX");
                 self.execute_branch_exchange()
+            }
+            // software interrupt
+            else if (self.instr >> 24) & 0b1111 == 0b1111 {
+                self.debug("        SWI");
+                self.swi()
             }
             // multiply and multiply_long share 0b000 with execute_dataproc. 
             else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
@@ -348,12 +359,14 @@ impl CPU{
         let res = Wrapping(self.operand1) - Wrapping(self.operand2);
         //print!(" op1: {}, op2: {}, res: {}, set_cond: {}", self.operand1, self.operand2, res, self.dataproc_set_cond());
         let res = res.0;
+        //println!("{:#x} {:#x} {:#x}", self.operand1, self.operand2, res);
         if self.dataproc_set_cond() && self.reg_dest != Register::R15 as u32 {
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, !(self.operand2 > self.operand1));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand2 >> 31);
         }
+        //println!("{}", self.read_flag(Flag::Z));
         0
     }
 
@@ -437,12 +450,13 @@ impl CPU{
             let overflow = (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand1 >> 31;
             if flag_c {
                 self.set_flag(Flag::C, !(self.operand1 > self.operand2));
-                self.set_flag(Flag::V, overflow);
+                //self.set_flag(Flag::V, overflow);
             }
             else{
                 self.set_flag(Flag::C, !(self.operand1 >= self.operand2));
-                self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
+                //self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
+            self.set_flag(Flag::V, overflow);
         }
         self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
@@ -463,12 +477,13 @@ impl CPU{
             let overflow = (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand2 >> 31;
             if flag_c {
                 self.set_flag(Flag::C, !(self.operand2 > self.operand1));
-                self.set_flag(Flag::V, overflow);
+                //self.set_flag(Flag::V, overflow);
             }
             else{
                 self.set_flag(Flag::C, !(self.operand2 >= self.operand1));
-                self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
+                //self.set_flag(Flag::V, (!overflow && res == 0) || (overflow && res > 0));
             }
+            self.set_flag(Flag::V, overflow);
         }
         self._op_set_pc(res);
         2 * (self.reg_dest == Register::R15 as u32) as u32
@@ -514,7 +529,8 @@ impl CPU{
             self.increment_pc = false;
             if self.dataproc_set_cond(){
                 if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                    self.reg[*reg as usize] = self.reg[*reg as usize];
+                    let spsr = self.reg[*reg as usize];
+                    self.set_cpsr(spsr);
                 }
             }
         }
@@ -522,7 +538,14 @@ impl CPU{
 
     // ---------- MRS and MSR
     fn execute_mrs_psr2reg(&mut self) -> u32 {
-        let reg = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
+        let reg = 
+        if (self.instr >> 22 & 1) == 0 {Register::CPSR} 
+        else {
+            match self.spsr_map.get(&self.op_mode){
+                Some(&opmode) => opmode,
+                None => Register::CPSR,
+            }
+        };
         let res = self.reg[reg as usize];
         self.reg_dest = (self.instr >> 12) & 0b1111;
         self.set_reg(self.reg_dest, res);
@@ -539,7 +562,14 @@ impl CPU{
     }*/
 
     fn execute_msr(&mut self) -> u32 {
-        let reg_dest = if (self.instr >> 22 & 1) == 0 {Register::CPSR} else {*self.spsr_map.get(&self.op_mode).unwrap()};
+        let reg_dest = 
+        if (self.instr >> 22 & 1) == 0 {Register::CPSR} 
+        else {
+            match self.spsr_map.get(&self.op_mode){
+                Some(&opmode) => opmode,
+                None => Register::CPSR,
+            }
+        };
         let res = if (self.instr >> 25) & 1 == 0 { // register
             self.read_reg(self.instr & 0b1111)
         }
@@ -549,6 +579,7 @@ impl CPU{
         };
 
         let mask = (self.instr >> 16) & 0b1111;
+        //println!("  pc: {:#x}, instr: {:#034b}, mask: {:#06b}", self.actual_pc, self.instr, mask);
         let mut cur = self.reg[reg_dest as usize];
         for i in 0..4{
             let range = 0b11111111 << (i * 8);
@@ -558,19 +589,7 @@ impl CPU{
             }
         }
 
-        self.reg[reg_dest as usize] = cur;
-        if reg_dest == Register::CPSR{
-            self.op_mode = match cur & 0b11111 {
-                0b10000 => OperatingMode::Usr,
-                0b10001 => OperatingMode::Fiq,
-                0b10010 => OperatingMode::Irq,
-                0b10011 => OperatingMode::Svc,
-                0b10111 => OperatingMode::Abt,
-                0b11011 => OperatingMode::Und,
-                0b11111 => OperatingMode::Sys,
-                _ => self.op_mode,
-            };
-        }
+        self.set_cpsr(cur);
 
         1
     }
@@ -673,6 +692,7 @@ impl CPU{
 
     // ---------- data transfers
     fn execute_ldr_str(&mut self, bus: &mut Bus) -> u32 {
+        //println!("{:#034b}", self.instr);
         //self.instr &= !(1 << 21);
         let mut cycles = 0;
         // I flag
@@ -720,6 +740,8 @@ impl CPU{
 
         //print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
 
+        let store_res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
+
         // W flag
         if !P || (self.instr >> 21) & 1 == 1 {
         //if (self.instr >> 21) & 1 == 1 {
@@ -729,14 +751,14 @@ impl CPU{
         match (L,B) {
             // register -> memory, byte
             (false, true) => {
-                bus.store_byte(addr, (self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0}) as u8);
+                bus.store_byte(addr, store_res as u8);
                 cycles += 2;
             },
             // register -> memory, word
             (false, false) => {
                 //let addr = (addr >> 2) << 2;
-                let res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
-                bus.store_word(addr, res);
+                
+                bus.store_word(addr, store_res);
                 cycles += 2;
             },
             // memory -> register, byte
@@ -805,13 +827,22 @@ impl CPU{
             addr = offset_addr;
         }
 
-        let addr = addr as usize;
-
         let L = (self.instr >> 20) & 1 == 1;
         let S = (self.instr >> 6) & 1 == 1;
         let H = (self.instr >> 5) & 1 == 1;
 
+        let rotate = 8 * (addr & 1);
+        let addr = if H 
+        {
+            addr as usize & !1
+        }
+        else{
+            addr as usize
+        };
+
         let reg = (self.instr >> 12) & 0b1111;
+        
+        let store_res = self.read_reg(reg);
 
         if !P || (self.instr >> 21) & 1 == 1 {
         //if (self.instr >> 21) & 1 == 1 {
@@ -821,19 +852,24 @@ impl CPU{
         match (L,S,H) {
             // register -> memory, byte (STRH)
             (false, false, true) => {
-                let res = self.read_reg(reg);
-                bus.store_halfword(addr, res as u16);
+                bus.store_halfword(addr, store_res as u16);
             },
             // LDRH
             (true, false, true) => {
-                self.set_reg(reg, bus.read_halfword(addr) as u32);
+                self.set_reg(reg, (bus.read_halfword(addr) as u32).rotate_right(rotate));
             },
             // LDRSH
             (true, true, true) => {
-                let mut res = bus.read_halfword(addr) as u32;
-                if (res >> 15) & 1 > 0{
+                let mut res = (bus.read_halfword(addr) as u32).rotate_right(rotate);
+                //println!("org: {:#034b} res: {:#034b}", bus.read_halfword(addr), res);
+                if rotate == 0 && (res >> 15) & 1 > 0{
                     res |= ((1<<16) - 1) << 16;
                 }
+                // only 2 values of rotate: 0 and 8
+                else if rotate == 8 && (res >> 7) & 1 > 0{
+                    res |= !0b11111111;
+                }
+                //println!("res: {:#b}", res);
                 self.set_reg(reg, res);
             },
             // LDRSB
@@ -875,7 +911,18 @@ impl CPU{
         let U = (self.instr >> 23) & 1 == 1;
         let pre = (self.instr >> 24) & 1 == 1;
 
-        let reg_list = self.instr & 0b1111111111111111;
+        self.debug(&format!(" addr: {:#x}, L: {}, W: {}, U: {}", addr, L, W, U));
+        //println!("{}",&format!(" addr: {:#x}, L: {}, W: {}, U: {}, pre: {}", addr, L, W, U, pre));
+
+        let mut reg_list = self.instr & 0b1111111111111111;
+        
+        // undefined operation: no registers in list
+        //let mut zero_reg_list = false;
+        //if reg_list == 0{
+        //    reg_list = 1 << 15;
+        //    zero_reg_list = true;
+        //}
+
         let mut cnt = 0;
         let r15_appear = (1 << 15) & reg_list > 0;
 
@@ -884,6 +931,11 @@ impl CPU{
                 cnt += 1;
             }
         }
+
+        // undefined operation: no registers in list
+        //if zero_reg_list{
+        //    cnt = 16;
+        //}
 
         let offset_addr = if U {addr + 4 * cnt} else {addr - 4 * cnt};
         if !U {
@@ -901,7 +953,10 @@ impl CPU{
 
         cnt = 0;
 
-        //io::stdout().flush().unwrap();
+        //if W {
+        //    self.set_reg(base_reg, offset_addr);
+        //}
+
         for i in 0..16 {
             if (1 << i) & reg_list > 0 {
                 
@@ -959,8 +1014,10 @@ impl CPU{
             bus.store_byte(addr, res as u8);
         }
         else{
-            self.set_reg(self.reg_dest, bus.read_word_unaligned(addr).rotate_right(8 * (addr as u32 & 0b11)));
-            bus.store_word_unaligned(addr, res);
+            let rotate = (addr as u32 & 0b11) << 3;
+            let addr = addr & !(0b11);
+            self.set_reg(self.reg_dest, bus.read_word(addr).rotate_right(rotate));
+            bus.store_word(addr, res);
         }
 
         4
@@ -1484,7 +1541,6 @@ impl CPU{
     }
 
     fn execute_thumb_hi_bx(&mut self) -> u32 { 
-        self.thumb_modify_flags = false;
         self.reg_dest = self.instr & 0b111;
         if (self.instr >> 7) & 1 > 0{
             self.reg_dest += 8;
@@ -1496,10 +1552,16 @@ impl CPU{
         self.operand1 = self.read_reg(self.reg_dest);
         self.operand2 = self.read_reg(reg_src);
     
-        1 + match (self.instr >> 8) & 0b11 {
-            0b00 => self.op_add(),
+        let clocks = 1 + match (self.instr >> 8) & 0b11 {
+            0b00 => {
+                self.thumb_modify_flags = false;
+                self.op_add()
+            },
             0b01 => self.op_cmp(),
-            0b10 => self.op_mov(),
+            0b10 => {
+                self.thumb_modify_flags = false;
+                self.op_mov()
+            },
             0b11 => {
                 if self.operand2 & 1 == 0{
                     self.set_flag(Flag::T, false);
@@ -1511,7 +1573,13 @@ impl CPU{
                 3
             }
             _ => 0
+        };
+
+        if self.reg_dest == 15{
+            self.actual_pc &= !1;
         }
+
+        clocks
     }
 
     fn execute_thumb_pc_relative_load(&mut self, bus: &Bus) -> u32 {
@@ -1856,6 +1924,27 @@ impl CPU{
         4
     }
 
+    // ---------- ARM AND THUMB
+    fn swi(&mut self) -> u32 {
+        self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
+            self.actual_pc + 2
+        }
+        else{
+            self.actual_pc + 4
+        };
+        self.reg[Register::SPSR_svc as usize] = self.reg[Register::CPSR as usize];
+        self.actual_pc = 0x8;
+        self.increment_pc = false;
+        
+        // switch to arm
+        //self.reg[Register::CPSR as usize] &= !(1 << (Flag::T as u32));
+
+        // switch to supervisor mode
+        self.set_cpsr(0b10011);
+
+        3
+    }
+
     // ---------- misc
     fn print_pc(&self) {
         if !self.debug{
@@ -1863,17 +1952,17 @@ impl CPU{
             return;
         }
         if self.read_flag(Flag::T){
-            println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+            println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
         }
         else{
-            println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
+            println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
         }
         print!("    ");
         for i in 0..16 {
             print!("R{}: {:x}, ", i, self.read_reg(i));
         }
         println!();
-        print!("N: {}, Z: {}, C: {}, V: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V));
+        print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize]);
         println!();
     }
 
@@ -1924,5 +2013,21 @@ impl CPU{
     fn set_reg(&mut self, reg: u32, val: u32) {
         let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
         self.reg[*reg as usize] = val;
+    }
+
+    fn set_cpsr(&mut self, val: u32) {
+        self.reg[Register::CPSR as usize] = val;
+        self.op_mode = match val & 0b11111 {
+            0b10000 => OperatingMode::Usr,
+            0b10001 => OperatingMode::Fiq,
+            0b10010 => OperatingMode::Irq,
+            0b10011 => OperatingMode::Svc,
+            0b10111 => OperatingMode::Abt,
+            0b11011 => OperatingMode::Und,
+            0b11111 => OperatingMode::Sys,
+            _ => {
+                panic!("invalid op mode");
+            },
+        };
     }
 }

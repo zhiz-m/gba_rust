@@ -1,3 +1,5 @@
 /target
-*.bios
+*.bin
 *.gba
+*.sav
+*.txt

@@ -49,6 +49,14 @@ impl Emulator {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
+            
+            if clock % 16000000 == 0{
+                self.cpu.debug = true;println!();
+            }
+            else{
+                self.cpu.debug = false;
+            }
+            //self.cpu.debug = true;
             self.cpu.clock(&mut self.bus);
             if let Some(buff) = self.ppu.clock(&mut self.bus){
                 if let Err(why) = self.screenbuf_sender.send(buff){
