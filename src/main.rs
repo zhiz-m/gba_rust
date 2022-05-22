@@ -18,7 +18,7 @@ use input_handler::InputHandler;
 
 use std::{env, thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{self, Sender, Receiver}};
 
-struct Emulator {
+struct GBA {
     bus: Bus,
     cpu: CPU,
     ppu: PPU,
@@ -28,9 +28,9 @@ struct Emulator {
     key_receiver: Receiver<(KeyInput,bool)>,
 }
 
-impl Emulator {
-    pub fn new(rom_path: String, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> Emulator {
-        let mut res = Emulator { 
+impl GBA {
+    pub fn new(rom_path: String, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> GBA {
+        let mut res = GBA { 
             bus: Bus::new(rom_path), 
             cpu: CPU::new(), 
             ppu: PPU::new(), 
@@ -45,18 +45,30 @@ impl Emulator {
         res
     }
 
-    pub fn start_loop(&mut self) -> Result<(), &'static str> {
+    pub fn start(&mut self) -> Result<(), &'static str> {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
             
-            if clock % 16000000 == 0{
-                self.cpu.debug = true;println!();
+            if clock % 16000000 < 200{
+                self.cpu.debug = true;
             }
             else{
                 self.cpu.debug = false;
             }
+
+            if clock % 16000000 == 200 {
+                println!();
+            }
+
             //self.cpu.debug = true;
+
+            if self.bus.check_cpu_halt_request() {
+                self.cpu.halt();
+            }
+
+            self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
+
             self.cpu.clock(&mut self.bus);
             if let Some(buff) = self.ppu.clock(&mut self.bus){
                 if let Err(why) = self.screenbuf_sender.send(buff){
@@ -85,11 +97,11 @@ fn main() {
     let (tx2, rx2) = mpsc::channel();
 
 
-    let mut emulator = Emulator::new(rom_path, tx, rx2);
+    let mut gba = GBA::new(rom_path, tx, rx2);
     let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2);
 
     thread::spawn(move || {
-        emulator.start_loop().unwrap();
+        gba.start().unwrap();
     });
 
     frontend.start().unwrap();

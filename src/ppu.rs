@@ -52,6 +52,8 @@ pub struct PPU {
 
     disp_cnt: u16,
     disp_stat: u16,
+
+    cpu_interrupt: u16,
 }
 
 impl PPU {
@@ -68,7 +70,18 @@ impl PPU {
 
             disp_cnt: 0,
             disp_stat: 0,
+        
+            cpu_interrupt: 0,
         }
+    }
+
+    pub fn check_cpu_interrupt(&mut self) -> u16 {
+        let res = self.cpu_interrupt;
+        self.cpu_interrupt = 0;
+        if res > 0{
+            println!("ppu cpu_interrupt: {:#018b}", res);
+        }
+        res
     }
 
     pub fn clock(&mut self, bus: &mut Bus) -> Option<ScreenBuffer> {
@@ -117,6 +130,11 @@ impl PPU {
 
             self.is_hblank = true;
 
+            // set hblank interrupt
+            if (self.disp_stat >> 4) & 1 > 0 {
+                self.cpu_interrupt |= 0b10;
+            }
+
             272
         }
         else{
@@ -136,15 +154,19 @@ impl PPU {
 
         self.disp_stat &= !0b111;
         if self.cur_line >= 160 {
+            // set vblank interrupt
+            if self.cur_line == 160 && (self.disp_stat >> 3) & 1 > 0 {
+                self.cpu_interrupt |= 1;
+            }
             self.disp_stat |= 0b001;
-            //panic!();
         }
         if self.is_hblank{
             self.disp_stat |= 0b010;
         }
-        if self.cur_line as u16 == self.disp_stat >> 8{
+        // vcount interrupt request
+        if (self.disp_stat >> 5) & 1 > 0 && self.cur_line as u16 == self.disp_stat >> 8{
             self.disp_stat |= 0b100;
-            // TODO: process interrupt if needed (https://www.coranac.com/tonc/text/video.htm)
+            self.cpu_interrupt |= 0b100;
         }
 
         bus.store_halfword(0x04000004, self.disp_stat);

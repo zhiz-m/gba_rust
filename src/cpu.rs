@@ -55,6 +55,9 @@ pub struct CPU{
     increment_pc: bool,
     thumb_modify_flags: bool,
 
+    halt: bool,
+    interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
+
     pub debug: bool,
 }
 
@@ -67,9 +70,9 @@ impl CPU{
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            actual_pc: 0x08000000,
+            //actual_pc: 0x08000000,
             //actual_pc: 0x080002f0,
-            //actual_pc: 0,
+            actual_pc: 0,
 
             //op_mode: OperatingMode::Svc,
             op_mode: OperatingMode::Sys,
@@ -94,10 +97,13 @@ impl CPU{
             clock_cur: 0,
             increment_pc: true,
             thumb_modify_flags: true,
+            
+            halt: false,
+            interrupt: 0,
 
             debug: false,
         };
-        res.set_reg(13, 0x03007FF0);
+        res.set_reg(13, 0x03007F00);
         res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
 
         // set CPSR for sys mode
@@ -109,9 +115,23 @@ impl CPU{
 
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
-            self.clock_cur += match self.read_flag(Flag::T) {
-                false => self.decode_execute_instruction_arm(bus),
-                true => self.decode_execute_instruction_thumb(bus)
+            //self.debug(&format!("halting: {}\n", self.halt));
+
+            self.clock_cur += 
+            
+            if self.check_interrupt(bus){
+                self.halt = false;
+                self.bus_set_reg_if(bus);
+                self.execute_hardware_interrupt()
+            }
+            else if self.halt {
+                1 // consume clock cycle; do nothing
+            }
+            else{
+                match self.read_flag(Flag::T) {
+                    false => self.decode_execute_instruction_arm(bus),
+                    true => self.decode_execute_instruction_thumb(bus)
+                }
             }
         }
         if self.clock_cur == 0{
@@ -150,7 +170,7 @@ impl CPU{
             // software interrupt
             else if (self.instr >> 24) & 0b1111 == 0b1111 {
                 self.debug("        SWI");
-                self.swi()
+                self.execute_software_interrupt()
             }
             // multiply and multiply_long share 0b000 with execute_dataproc. 
             else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
@@ -209,12 +229,13 @@ impl CPU{
                     }
                 }
             };
-            self.debug("\n\n");
+            
         }
         else{
             cur_cycles = 1;
+            self.debug("cond check failed, no instruction execution");
         }
-
+        self.debug("\n\n");
         if self.increment_pc {
             self.actual_pc += 0b100;
         };
@@ -243,10 +264,8 @@ impl CPU{
         let addr = self.read_reg(self.instr & 0b1111);
         if addr & 1 > 0 {
             self.set_flag(Flag::T, true);
-            //self.instr_set = InstructionSet::Thumb;
         };
         self.actual_pc = (addr >> 1) << 1;
-        //print!(" addr: {:x}", addr);
         self.increment_pc = false;
         3
     }
@@ -532,6 +551,9 @@ impl CPU{
                     let spsr = self.reg[*reg as usize];
                     self.set_cpsr(spsr);
                 }
+                else{
+                    panic!("s bit should not be set");
+                }
             }
         }
     }
@@ -562,12 +584,14 @@ impl CPU{
     }*/
 
     fn execute_msr(&mut self) -> u32 {
+        let R = (self.instr >> 22 & 1) > 0;
         let reg_dest = 
-        if (self.instr >> 22 & 1) == 0 {Register::CPSR} 
+        if !R {Register::CPSR} 
         else {
+            //println!("{} {:#034b}", self.op_mode as u32, self.reg[Register::CPSR as usize]);
             match self.spsr_map.get(&self.op_mode){
                 Some(&opmode) => opmode,
-                None => Register::CPSR,
+                None => panic!("msr called on R=1, but this mode has no SPSR"),
             }
         };
         let res = if (self.instr >> 25) & 1 == 0 { // register
@@ -588,9 +612,12 @@ impl CPU{
                 cur |= res & range;
             }
         }
-
-        self.set_cpsr(cur);
-
+        if !R{
+            self.set_cpsr(cur);
+        }
+        else{
+            self.reg[reg_dest as usize] = cur;
+        }
         1
     }
 
@@ -700,6 +727,7 @@ impl CPU{
             // NOTE: double check if cycles are added here
             //cycles += 
             self.process_reg_rotate();
+            self.debug(&format!(" reg rotate operand2: {:#x}", self.operand2));
             self.operand2
         }
         else{
@@ -741,6 +769,9 @@ impl CPU{
         //print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
 
         let store_res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
+
+        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}, IE: {:#018b}", addr, L, store_res, reg, bus.read_halfword(0x4000200)));
+
 
         // W flag
         if !P || (self.instr >> 21) & 1 == 1 {
@@ -812,7 +843,7 @@ impl CPU{
         // base reg
         let base_reg = (self.instr >> 16) & 0b1111;
         let mut addr =  self.read_reg(base_reg);
-        self.debug(&format!(" org_addr: {:#x},", addr));
+        //self.debug(&format!(" org_addr: {:#x},", addr));
         // U flag
         let offset_addr = if (self.instr >> 23) & 1 == 0{
             addr - offset
@@ -843,6 +874,9 @@ impl CPU{
         let reg = (self.instr >> 12) & 0b1111;
         
         let store_res = self.read_reg(reg);
+
+        self.debug(&format!(" addr: {:#x}, L: {}, H: {}, store_res: {:#x}, rd: {}", addr, L, H, store_res, reg));
+
 
         if !P || (self.instr >> 21) & 1 == 1 {
         //if (self.instr >> 21) & 1 == 1 {
@@ -987,7 +1021,7 @@ impl CPU{
         }
 
         if S && r15_appear && L {
-            self.reg[Register::CPSR as usize] = self.reg[self.spsr_map[&self.op_mode] as usize];
+            self.set_cpsr(self.reg[self.spsr_map[&self.op_mode] as usize]);
         }
 
         if L {
@@ -1209,6 +1243,10 @@ impl CPU{
         if (self.instr >> 11) & 0b11111 == 0b00011 {
             self.debug("        thumb ADD SUB");
             self.execute_thumb_add_sub_imm3()
+        }
+        else if (self.instr >> 8) == 0b11011111 {
+            self.debug("        thumb SWI");
+            self.execute_software_interrupt()
         }
         else if (self.instr >> 10) & 0b111111 == 0b010000 {
             self.debug("        thumb ALU general");
@@ -1600,6 +1638,8 @@ impl CPU{
         let addr = addr.0 as usize;
         self.reg_dest = self.instr & 0b111;
 
+        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
+
         match (L,B) {
             // register -> memory, word
             (false, false) => {
@@ -1636,6 +1676,8 @@ impl CPU{
         let addr = addr.0 as usize;
         self.reg_dest = self.instr & 0b111;
 
+        self.debug(&format!(" addr: {:#x}, L: true, H: {}, store_res: {:#x}, rd: {}", addr, H, self.read_reg(self.reg_dest), self.reg_dest));
+
         match (S,H) {
             // register -> memory, unsigned halfword
             (false, false) => {
@@ -1645,7 +1687,7 @@ impl CPU{
             },
             // memory -> register, unsigned halfword
             (false, true) => {
-                let res = bus.read_halfword(addr) as u32;
+                let res = (bus.read_halfword(addr & !1) as u32).rotate_right((addr as u32 & 1)*8);
                 self.set_reg(self.reg_dest, res);
                 3
             }
@@ -1660,9 +1702,18 @@ impl CPU{
             }
             // memory -> register, signed halfword
             (true, true) => {
-                let mut res = bus.read_halfword(addr) as u32;
+                /*let mut res = bus.read_halfword(addr & !1) as u32;
                 if (res >> 15) & 1 > 0{
                     res |= !0b1111111111111111;
+                }
+                self.set_reg(self.reg_dest, res);*/
+                let rotate = (addr as u32 & 1) * 8;
+                let mut res = (bus.read_halfword(addr & !1) as u32).rotate_right(rotate);
+                if rotate == 0 && (res >> 15) & 1 > 0{
+                    res |= ((1<<16) - 1) << 16;
+                }
+                else if rotate == 8 && (res >> 7) & 1 > 0{
+                    res |= !0b11111111;
                 }
                 self.set_reg(self.reg_dest, res);
                 3
@@ -1677,6 +1728,8 @@ impl CPU{
         let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111));
         let addr = if B {addr + Wrapping((self.instr >> 6) & 0b11111)} else {addr + Wrapping(((self.instr >> 6) & 0b11111) << 2)};
         let addr = addr.0 as usize;
+
+        self.debug(&format!(" addr: {:#x}, L: {}, B: {}, store_res: {:#x}, rd: {}", addr, L, B, self.read_reg(self.reg_dest), self.reg_dest));
 
         match (L,B) {
             // register -> memory, word
@@ -1709,8 +1762,11 @@ impl CPU{
     fn execute_thumb_load_store_halfword_imm5(&mut self, bus: &mut Bus) -> u32 {
         self.reg_dest = self.instr & 0b111;
         let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111)) + Wrapping(((self.instr >> 6) & 0b11111) << 1);
-        let addr = addr.0 as usize;
+        let rotate = (addr.0 & 1) * 8;
+        let addr = addr.0 as usize & !1;
         
+        self.debug(&format!(" addr: {:#x}, L: true, H: true, store_res: {:#x}, rd: {}", addr, self.read_reg(self.reg_dest), self.reg_dest));
+
         match (self.instr >> 11) & 1 > 0{
             false => {
                 let res = self.read_reg(self.reg_dest) as u16;
@@ -1719,7 +1775,7 @@ impl CPU{
             },
             true => {
                 let res = bus.read_halfword(addr);
-                self.set_reg(self.reg_dest, res as u32);
+                self.set_reg(self.reg_dest, (res as u32).rotate_right(rotate));
                 3
             }
         }
@@ -1732,8 +1788,11 @@ impl CPU{
     fn execute_thumb_load_store_sp(&mut self, bus: &mut Bus) -> u32 {
         let L = (self.instr >> 11) & 1 > 0;
         let addr = Wrapping(self.read_reg(13)) + Wrapping((self.instr & 0b11111111) << 2);
-        let addr = addr.0 as usize;
+        let rotate = (addr.0 & 0b11) * 8;
+        let addr = addr.0 as usize & !0b11;
         self.reg_dest = (self.instr >> 8) & 0b111;
+
+        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
 
         match L {
             false => {
@@ -1743,7 +1802,7 @@ impl CPU{
             },
             true => {
                 let res = bus.read_word(addr);
-                self.set_reg(self.reg_dest, res);
+                self.set_reg(self.reg_dest, res.rotate_right(rotate));
                 3
             }
         }
@@ -1790,17 +1849,17 @@ impl CPU{
         if !L {
             start_addr -= Wrapping(4 * cnt);
         }
-        let mut addr = start_addr.0 as usize & !0b11;
+        let mut addr = start_addr.0 as usize;
         
         for i in 0..8{
             if reg_list & (1 << i) > 0{
                 if L {
-                    let res = bus.read_word(addr);
+                    let res = bus.read_word(addr & !0b11);
                     self.set_reg(i, res);
                 }
                 else{
                     let res = self.read_reg(i);
-                    bus.store_word(addr, res);
+                    bus.store_word(addr & !0b11, res);
                 }
                 addr += 4;
             }
@@ -1837,29 +1896,34 @@ impl CPU{
         let reg_list = self.instr & 0b11111111;
         let L = (self.instr >> 11) & 1 > 0;
         let base_reg = (self.instr >> 8) & 0b111;
-        let addr = self.read_reg(base_reg) & !0b11;
+        let addr = self.read_reg(base_reg);
         let mut addr = addr as usize;
+
+        let mut num_reg = 0;
+        for i in 0..8 {
+            if reg_list & (1 << i) > 0{
+                num_reg += 1;
+            }
+        }
 
         let mut cnt = 0;
         for i in 0..8 {
             if reg_list & (1 << i) > 0{
                 if !L {
                     let res = self.read_reg(i);
-                    bus.store_word(addr, res);
+                    bus.store_word(addr & !0b11, res);
                 }
                 else{
-                    let res = bus.read_word(addr);
+                    let res = bus.read_word(addr & !0b11);
                     self.set_reg(i, res);
                 }
                 if cnt == 0 {
-                    self.set_reg(base_reg, addr as u32 + 4);
+                    self.set_reg(base_reg, addr as u32 + num_reg * 4);
                 }
                 addr += 4;
                 cnt += 1;
             }
         }
-
-        
 
         if L {
             cnt + 2
@@ -1924,27 +1988,6 @@ impl CPU{
         4
     }
 
-    // ---------- ARM AND THUMB
-    fn swi(&mut self) -> u32 {
-        self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
-            self.actual_pc + 2
-        }
-        else{
-            self.actual_pc + 4
-        };
-        self.reg[Register::SPSR_svc as usize] = self.reg[Register::CPSR as usize];
-        self.actual_pc = 0x8;
-        self.increment_pc = false;
-        
-        // switch to arm
-        //self.reg[Register::CPSR as usize] &= !(1 << (Flag::T as u32));
-
-        // switch to supervisor mode
-        self.set_cpsr(0b10011);
-
-        3
-    }
-
     // ---------- misc
     fn print_pc(&self) {
         if !self.debug{
@@ -1970,6 +2013,88 @@ impl CPU{
         if self.debug{
             print!("{}", msg);
         }
+    }
+
+    // ---------- interrupts and halting
+    pub fn halt(&mut self) {
+        self.halt = true;
+    }
+
+    pub fn set_interrupt(&mut self, interrupt: u16) {
+        if self.interrupt > 0{    
+            self.debug(&format!("set_interrupt bits requested: {:#018b}\n", self.interrupt));
+        }
+        self.interrupt = interrupt;
+    }
+    
+    fn check_interrupt(&self, bus: &Bus) -> bool {
+        if self.interrupt > 0{    
+            self.debug(&format!("interrupt bits requested: {:#018b}\n", self.interrupt));
+        }
+        !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
+        bus.read_word(0x0400208) == 1 && // check that IME interrupt is turned on
+        self.interrupt & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
+    }
+
+    fn bus_set_reg_if(&mut self, bus: &mut Bus) {
+        let reg_if = bus.read_halfword(0x04000202);
+        let cur_reg_if = self.interrupt & bus.read_halfword(0x04000200);
+        self.interrupt = 0;
+        
+        // NOTE: this only sets the bits that are 1 in cur_reg_if but 0 in reg_if.
+        // this is to prevent the acknowledgement of an existing interrupt (handled by bus)
+        bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+    }
+
+    // Mode: SVC (supervisor) for software interrupt
+    //       IRQ (interrupt) for hardware interrupt
+    fn execute_hardware_interrupt(&mut self) -> u32 {
+        self.reg[Register::R14_irq as usize] = self.actual_pc;
+        let mut cpsr = self.reg[Register::CPSR as usize];
+        self.reg[Register::SPSR_irq as usize] = cpsr;
+        self.actual_pc = 0x18;
+        self.increment_pc = false;
+        
+        // switch to arm
+        cpsr &= !(1 << (Flag::T as u32));
+
+        // switch to supervisor mode
+        cpsr &= !0b11111;
+        cpsr |=  0b10011;
+
+        //disable interrupt
+        cpsr |= 1 << (Flag::I as usize);
+
+        self.set_cpsr(cpsr);
+
+        3
+    }
+    
+    fn execute_software_interrupt(&mut self) -> u32 {
+        self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
+            self.actual_pc + 2
+        }
+        else{
+            self.actual_pc + 4
+        };
+        let mut cpsr = self.reg[Register::CPSR as usize];
+        self.reg[Register::SPSR_svc as usize] = cpsr;
+        self.actual_pc = 0x8;
+        self.increment_pc = false;
+        
+        // switch to arm
+        cpsr &= !(1 << (Flag::T as u32));
+
+        // switch to supervisor mode
+        cpsr &= !0b11111;
+        cpsr |=  0b10011;
+
+        //disable interrupt
+        cpsr |= 1 << (Flag::I as usize);
+
+        self.set_cpsr(cpsr);
+
+        3
     }
 
     // ---------- read and set helpers
