@@ -48,27 +48,27 @@ impl GBA {
     pub fn start(&mut self) -> Result<(), &'static str> {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let start_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
             
-            if clock % 16000000 < 200{
-                self.cpu.debug = true;
-            }
-            else{
-                self.cpu.debug = false;
-            }
-
-            if clock % 16000000 == 200 {
-                println!();
+            if clock % 16000000 == 0{
+                let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().checked_sub(start_time).unwrap().as_secs();
+                if since > 0{
+                    let cps = clock / since;
+                    println!("clocks per second: {}", cps);
+                }
+                //self.cpu.debug += 20;
             }
 
             //self.cpu.debug = true;
 
+            
             if self.bus.check_cpu_halt_request() {
                 self.cpu.halt();
             }
 
             self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
-
+            
             self.cpu.clock(&mut self.bus);
             if let Some(buff) = self.ppu.clock(&mut self.bus){
                 if let Err(why) = self.screenbuf_sender.send(buff){
@@ -76,7 +76,7 @@ impl GBA {
                 }
                 self.input_handler.process_input(&self.key_receiver, &mut self.bus);
             }
-
+            
             clock += 1;
 
             if clock % config::CPU_EXECUTION_INTERVAL_CLOCKS == 0{

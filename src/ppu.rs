@@ -79,7 +79,7 @@ impl PPU {
         let res = self.cpu_interrupt;
         self.cpu_interrupt = 0;
         if res > 0{
-            println!("ppu cpu_interrupt: {:#018b}", res);
+            //println!("ppu cpu_interrupt: {:#018b}", res);
         }
         res
     }

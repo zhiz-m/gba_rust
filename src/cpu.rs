@@ -58,7 +58,7 @@ pub struct CPU{
     halt: bool,
     interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
 
-    pub debug: bool,
+    pub debug: u32,
 }
 
 impl CPU{
@@ -70,9 +70,9 @@ impl CPU{
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            //actual_pc: 0x08000000,
+            actual_pc: 0x08000000,
             //actual_pc: 0x080002f0,
-            actual_pc: 0,
+            //actual_pc: 0,
 
             //op_mode: OperatingMode::Svc,
             op_mode: OperatingMode::Sys,
@@ -101,7 +101,7 @@ impl CPU{
             halt: false,
             interrupt: 0,
 
-            debug: false,
+            debug: 0,
         };
         res.set_reg(13, 0x03007F00);
         res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
@@ -116,12 +116,14 @@ impl CPU{
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
             //self.debug(&format!("halting: {}\n", self.halt));
-
+            self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
             self.clock_cur += 
             
             if self.check_interrupt(bus){
                 self.halt = false;
                 self.bus_set_reg_if(bus);
+                //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
+                //self.debug = true;
                 self.execute_hardware_interrupt()
             }
             else if self.halt {
@@ -1989,11 +1991,12 @@ impl CPU{
     }
 
     // ---------- misc
-    fn print_pc(&self) {
-        if !self.debug{
+    fn print_pc(&mut self) {
+        if self.debug == 0{
             //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
             return;
         }
+        self.debug -= 1;
         if self.read_flag(Flag::T){
             println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
         }
@@ -2009,8 +2012,9 @@ impl CPU{
         println!();
     }
 
-    fn debug(&self, msg: &str) {
-        if self.debug{
+    fn debug(&mut self, msg: &str) {
+        if self.debug > 0{
+            self.debug -= 1;
             print!("{}", msg);
         }
     }
@@ -2021,18 +2025,22 @@ impl CPU{
     }
 
     pub fn set_interrupt(&mut self, interrupt: u16) {
-        if self.interrupt > 0{    
-            self.debug(&format!("set_interrupt bits requested: {:#018b}\n", self.interrupt));
-        }
+        //if interrupt > 0{    
+            //self.debug(&format!("set_interrupt bits requested: {:#018b}\n", self.interrupt));
+        //}
         self.interrupt = interrupt;
     }
     
     fn check_interrupt(&self, bus: &Bus) -> bool {
         if self.interrupt > 0{    
-            self.debug(&format!("interrupt bits requested: {:#018b}\n", self.interrupt));
+            //self.debug(&format!("interrupt bits requested: {:#018b}\n", self.interrupt));
+            //println!("interrupt bits requested: {:#018b}\n", self.interrupt);
         }
+        //f bus.read_word(0x04000208) > 0 {
+        //    println!("IME: {:#034b}", bus.read_word(0x0400208));
+        //}
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_word(0x0400208) == 1 && // check that IME interrupt is turned on
+        bus.read_word(0x04000208) == 1 && // check that IME interrupt is turned on
         self.interrupt & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 
@@ -2060,7 +2068,7 @@ impl CPU{
 
         // switch to supervisor mode
         cpsr &= !0b11111;
-        cpsr |=  0b10011;
+        cpsr |=  0b10010;
 
         //disable interrupt
         cpsr |= 1 << (Flag::I as usize);
