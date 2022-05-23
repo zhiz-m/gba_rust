@@ -56,7 +56,7 @@ pub struct CPU{
     thumb_modify_flags: bool,
 
     halt: bool,
-    interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
+    //interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
 
     pub debug: u32,
 }
@@ -70,9 +70,9 @@ impl CPU{
             operand1: 0,
             operand2: 0,
             reg_dest: 0,
-            actual_pc: 0x08000000,
+            //actual_pc: 0x08000000,
             //actual_pc: 0x080002f0,
-            //actual_pc: 0,
+            actual_pc: 0,
 
             //op_mode: OperatingMode::Svc,
             op_mode: OperatingMode::Sys,
@@ -99,7 +99,7 @@ impl CPU{
             thumb_modify_flags: true,
             
             halt: false,
-            interrupt: 0,
+            //interrupt: 0,
 
             debug: 0,
         };
@@ -116,12 +116,12 @@ impl CPU{
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
             //self.debug(&format!("halting: {}\n", self.halt));
-            self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
+            //self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
             self.clock_cur += 
             
             if self.check_interrupt(bus){
                 self.halt = false;
-                self.bus_set_reg_if(bus);
+                //self.bus_set_reg_if(bus);
                 //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
                 //self.debug = true;
                 self.execute_hardware_interrupt()
@@ -134,10 +134,11 @@ impl CPU{
                     false => self.decode_execute_instruction_arm(bus),
                     true => self.decode_execute_instruction_thumb(bus)
                 }
-            }
+            };
+            //self.interrupt = 0;
         }
         if self.clock_cur == 0{
-            self.print_pc();
+            //self.print_pc();
         }
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
@@ -160,7 +161,7 @@ impl CPU{
         
         self.increment_pc = true;
 
-        self.print_pc();
+        self.print_pc(bus);
 
         if self.check_cond(self.instr >> 28) {
             cur_cycles +=
@@ -237,10 +238,12 @@ impl CPU{
             cur_cycles = 1;
             self.debug("cond check failed, no instruction execution");
         }
-        self.debug("\n\n");
+        
         if self.increment_pc {
             self.actual_pc += 0b100;
+            self.debug(" increment pc\n");
         };
+        self.debug("\n\n");
 
         cur_cycles
     }
@@ -1236,7 +1239,7 @@ impl CPU{
         self.increment_pc = true;
         self.thumb_modify_flags = true;
 
-        self.print_pc();
+        self.print_pc(bus);
 
         // for compatibility with thumb op instructions 
         self.shifter_carry = 0;
@@ -1678,7 +1681,7 @@ impl CPU{
         let addr = addr.0 as usize;
         self.reg_dest = self.instr & 0b111;
 
-        self.debug(&format!(" addr: {:#x}, L: true, H: {}, store_res: {:#x}, rd: {}", addr, H, self.read_reg(self.reg_dest), self.reg_dest));
+        self.debug(&format!(" addr: {:#x}, H: {}, store_res: {:#x}, rd: {}", addr, H, self.read_reg(self.reg_dest), self.reg_dest));
 
         match (S,H) {
             // register -> memory, unsigned halfword
@@ -1767,7 +1770,9 @@ impl CPU{
         let rotate = (addr.0 & 1) * 8;
         let addr = addr.0 as usize & !1;
         
-        self.debug(&format!(" addr: {:#x}, L: true, H: true, store_res: {:#x}, rd: {}", addr, self.read_reg(self.reg_dest), self.reg_dest));
+        self.debug(&format!(" addr: {:#x}, L: {}, H: true, store_res: {:#x}, rd: {}", addr, (self.instr >> 11) & 1 > 0, self.read_reg(self.reg_dest), self.reg_dest));
+        self.debug(&format!(" dma1_src: {:#x}, dma1_dest: {:#x}, dma1_num: {}", bus.read_word(0x40000BC), bus.read_word(0x40000C0), bus.read_halfword(0x40000C4)));
+        self.debug(&format!(" dma2_src: {:#x}, dma2_dest: {:#x}, dma2_num: {}", bus.read_word(0x40000C8), bus.read_word(0x40000CC), bus.read_halfword(0x40000D0)));
 
         match (self.instr >> 11) & 1 > 0{
             false => {
@@ -1991,7 +1996,7 @@ impl CPU{
     }
 
     // ---------- misc
-    fn print_pc(&mut self) {
+    fn print_pc(&mut self, bus: &Bus) {
         if self.debug == 0{
             //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
             return;
@@ -2008,7 +2013,7 @@ impl CPU{
             print!("R{}: {:x}, ", i, self.read_reg(i));
         }
         println!();
-        print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize]);
+        print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202));
         println!();
     }
 
@@ -2024,40 +2029,34 @@ impl CPU{
         self.halt = true;
     }
 
-    pub fn set_interrupt(&mut self, interrupt: u16) {
+    /*pub fn set_interrupt(&mut self, interrupt: u16) {
         //if interrupt > 0{    
             //self.debug(&format!("set_interrupt bits requested: {:#018b}\n", self.interrupt));
         //}
         self.interrupt = interrupt;
-    }
+    }*/
     
     fn check_interrupt(&self, bus: &Bus) -> bool {
-        if self.interrupt > 0{    
-            //self.debug(&format!("interrupt bits requested: {:#018b}\n", self.interrupt));
-            //println!("interrupt bits requested: {:#018b}\n", self.interrupt);
-        }
-        //f bus.read_word(0x04000208) > 0 {
-        //    println!("IME: {:#034b}", bus.read_word(0x0400208));
-        //}
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
         bus.read_word(0x04000208) == 1 && // check that IME interrupt is turned on
-        self.interrupt & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
+        bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 
-    fn bus_set_reg_if(&mut self, bus: &mut Bus) {
+    /*fn bus_set_reg_if(&mut self, bus: &mut Bus) {
         let reg_if = bus.read_halfword(0x04000202);
         let cur_reg_if = self.interrupt & bus.read_halfword(0x04000200);
-        self.interrupt = 0;
         
         // NOTE: this only sets the bits that are 1 in cur_reg_if but 0 in reg_if.
         // this is to prevent the acknowledgement of an existing interrupt (handled by bus)
         bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
-    }
+        //bus.store_halfword(0x04000202, 1);
+    }*/
 
     // Mode: SVC (supervisor) for software interrupt
     //       IRQ (interrupt) for hardware interrupt
     fn execute_hardware_interrupt(&mut self) -> u32 {
-        self.reg[Register::R14_irq as usize] = self.actual_pc;
+        //self.reg[Register::R14_irq as usize] = self.actual_pc;
+        self.reg[Register::R14_irq as usize] = self.actual_pc + 4;
         let mut cpsr = self.reg[Register::CPSR as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;
         self.actual_pc = 0x18;
@@ -2066,7 +2065,7 @@ impl CPU{
         // switch to arm
         cpsr &= !(1 << (Flag::T as u32));
 
-        // switch to supervisor mode
+        // switch to irq mode
         cpsr &= !0b11111;
         cpsr |=  0b10010;
 
