@@ -736,7 +736,7 @@ impl CPU{
             // NOTE: double check if cycles are added here
             //cycles += 
             self.process_reg_rotate();
-            self.debug(&format!(" reg rotate operand2: {:#x}", self.operand2));
+            //self.debug(&format!(" reg rotate operand2: {:#x}", self.operand2));
             self.operand2
         }
         else{
@@ -779,7 +779,7 @@ impl CPU{
 
         let store_res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
 
-        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}, IE: {:#018b}", addr, L, store_res, reg, bus.read_halfword(0x4000200)));
+        //self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}, IE: {:#018b}", addr, L, store_res, reg, bus.read_halfword(0x4000200)));
 
 
         // W flag
@@ -884,7 +884,7 @@ impl CPU{
         
         let store_res = self.read_reg(reg);
 
-        self.debug(&format!(" addr: {:#x}, L: {}, H: {}, store_res: {:#x}, rd: {}", addr, L, H, store_res, reg));
+        //self.debug(&format!(" addr: {:#x}, L: {}, H: {}, store_res: {:#x}, rd: {}", addr, L, H, store_res, reg));
 
 
         if !P || (self.instr >> 21) & 1 == 1 {
@@ -929,7 +929,7 @@ impl CPU{
         };
 
         // W flag
-        self.debug(&format!(" offset_addr: {:#x},", offset_addr));
+        //self.debug(&format!(" offset_addr: {:#x},", offset_addr));
         
 
         if (L,S,H) == (false, false, true) {
@@ -954,7 +954,7 @@ impl CPU{
         let U = (self.instr >> 23) & 1 == 1;
         let pre = (self.instr >> 24) & 1 == 1;
 
-        self.debug(&format!(" addr: {:#x}, L: {}, W: {}, U: {}", addr, L, W, U));
+        //self.debug(&format!(" addr: {:#x}, L: {}, W: {}, U: {}", addr, L, W, U));
         //println!("{}",&format!(" addr: {:#x}, L: {}, W: {}, U: {}, pre: {}", addr, L, W, U, pre));
 
         let mut reg_list = self.instr & 0b1111111111111111;
@@ -1647,7 +1647,7 @@ impl CPU{
         let addr = addr.0 as usize;
         self.reg_dest = self.instr & 0b111;
 
-        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
+        //self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
 
         match (L,B) {
             // register -> memory, word
@@ -1685,7 +1685,7 @@ impl CPU{
         let addr = addr.0 as usize;
         self.reg_dest = self.instr & 0b111;
 
-        self.debug(&format!(" addr: {:#x}, H: {}, store_res: {:#x}, rd: {}", addr, H, self.read_reg(self.reg_dest), self.reg_dest));
+        //self.debug(&format!(" addr: {:#x}, H: {}, store_res: {:#x}, rd: {}", addr, H, self.read_reg(self.reg_dest), self.reg_dest));
 
         match (S,H) {
             // register -> memory, unsigned halfword
@@ -1738,7 +1738,7 @@ impl CPU{
         let addr = if B {addr + Wrapping((self.instr >> 6) & 0b11111)} else {addr + Wrapping(((self.instr >> 6) & 0b11111) << 2)};
         let addr = addr.0 as usize;
 
-        self.debug(&format!(" addr: {:#x}, L: {}, B: {}, store_res: {:#x}, rd: {}", addr, L, B, self.read_reg(self.reg_dest), self.reg_dest));
+        //self.debug(&format!(" addr: {:#x}, L: {}, B: {}, store_res: {:#x}, rd: {}", addr, L, B, self.read_reg(self.reg_dest), self.reg_dest));
 
         match (L,B) {
             // register -> memory, word
@@ -1774,9 +1774,9 @@ impl CPU{
         let rotate = (addr.0 & 1) * 8;
         let addr = addr.0 as usize & !1;
         
-        self.debug(&format!(" addr: {:#x}, L: {}, H: true, store_res: {:#x}, rd: {}", addr, (self.instr >> 11) & 1 > 0, self.read_reg(self.reg_dest), self.reg_dest));
-        self.debug(&format!(" dma1_src: {:#x}, dma1_dest: {:#x}, dma1_num: {}", bus.read_word(0x40000BC), bus.read_word(0x40000C0), bus.read_halfword(0x40000C4)));
-        self.debug(&format!(" dma2_src: {:#x}, dma2_dest: {:#x}, dma2_num: {}", bus.read_word(0x40000C8), bus.read_word(0x40000CC), bus.read_halfword(0x40000D0)));
+        //self.debug(&format!(" addr: {:#x}, L: {}, H: true, store_res: {:#x}, rd: {}", addr, (self.instr >> 11) & 1 > 0, self.read_reg(self.reg_dest), self.reg_dest));
+        //self.debug(&format!(" dma1_src: {:#x}, dma1_dest: {:#x}, dma1_num: {}", bus.read_word(0x40000BC), bus.read_word(0x40000C0), bus.read_halfword(0x40000C4)));
+        //self.debug(&format!(" dma2_src: {:#x}, dma2_dest: {:#x}, dma2_num: {}", bus.read_word(0x40000C8), bus.read_word(0x40000CC), bus.read_halfword(0x40000D0)));
 
         match (self.instr >> 11) & 1 > 0{
             false => {
@@ -1803,7 +1803,7 @@ impl CPU{
         let addr = addr.0 as usize & !0b11;
         self.reg_dest = (self.instr >> 8) & 0b111;
 
-        self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
+        //self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}", addr, L, self.read_reg(self.reg_dest), self.reg_dest));
 
         match L {
             false => {

@@ -13,15 +13,15 @@ pub enum Pixel {
 impl Pixel{
     pub fn new_colour(r: u8, g: u8, b: u8) -> Pixel{
         assert!(r < 32 && g < 32 && b < 32);
-        return Pixel::Colour(r,g,b)
+        return Pixel::Colour(r, g, b)
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
-        if let &Pixel::Colour(r,g,b) = self{
-            (r as f32 / 32., g as f32 / 32., b as f32 / 32.)
+        if let &Pixel::Colour(r, g, b) = self{
+            (r as f32 / 31., g as f32 / 31., b as f32 / 31.)
         }
         else{
-            (0.,0.,0.)
+            (0., 0., 0.)
         }
     }
 
@@ -29,8 +29,8 @@ impl Pixel{
         if let Pixel::Colour(r_old, g_old, b_old) = self{
             if let Pixel::Colour(r,g,b) = new_pixel{
                 *r_old = r;
-                *b_old = g;
-                *g_old = b;
+                *g_old = g;
+                *b_old = b;
             }
         }
         else{
@@ -263,34 +263,41 @@ impl PPU {
                 continue; // ignore lower charblock on bitmap modes
             }
             let addr = base_tile_index as usize * 32 + 0x6010000;
-
+            
             let y = attr0 & 0b11111111;
             let x = attr1 & 0b11111111;
 
-            // width, height
+            // width, height in pixels
             let (w,h) = self.get_sprite_dimensions((attr0 >> 14) as u8, (attr1 >> 14) as u8);
-            let row_size = tile_size as usize * w as usize;
+            let row_size = tile_size as usize * w as usize / 8;
+
+            let tile_data = bus.bulk_read_word(addr, tile_size as usize * w as usize * h as usize / 64);
 
             for i in 0..h as usize{
                 // todo: consider 2d mapping
-                let row = bus.bulk_read_word(addr + row_size * i, row_size);
+                //let row = bus.bulk_read_word(addr + row_size * i, row_size);
                 for j in 0..w as usize{
-                    
+                    let offset_pixels = (i >> 3) * (w as usize >> 3) * 64 + (j >> 3) * 64 + ((i & 0b111) * 8 + (j & 0b111));
                     let pal = 
                     // 4 bits per pixel
                     if !density { 
-                        if j & 1 > 0{
-                            row[j >> 1] >> 4
+                        if offset_pixels & 1 > 0{
+                            tile_data[offset_pixels >> 1] >> 4
                         }
                         else{
-                            row[j >> 1]
+                            tile_data[offset_pixels >> 1]
                         }
                     }
                     // 8 bits per pixel
                     else{
-                        row[j]
+                        tile_data[offset_pixels]
                     };
                     let pixel = self.process_palette_colour(pal, true, bus);
+
+                    if self.cur_line == 0 && i == 5 && j == 3{
+                        //println!("r {}, g: {}, b: {}", pixel.to_float().0, pixel.to_float().1, pixel.to_float().2);
+                        println!("addr: {:#x}, addr_row: {:#x}", addr, addr + row_size * i);
+                    }
 
                     // TODO: process affine transformations
                     if i as u8 + y as u8 == self.cur_line && (j + x as usize) < 240{
@@ -302,9 +309,22 @@ impl PPU {
         
     }
 
-    // returns width, height
+    // returns width, height in terms of pixels
     fn get_sprite_dimensions(&self, shape: u8, size: u8) -> (u8, u8) {
         match(shape, size) {
+            /*(0b00, 0b00) => (1,1),
+            (0b00, 0b01) => (2,2),
+            (0b00, 0b10) => (4,4),
+            (0b00, 0b11) => (8,8),
+            (0b01, 0b00) => (2,1),
+            (0b01, 0b01) => (4,1),
+            (0b01, 0b10) => (4,2),
+            (0b01, 0b11) => (8,4),
+            (0b10, 0b00) => (1,2),
+            (0b10, 0b01) => (1,4),
+            (0b10, 0b10) => (2,4),
+            (0b10, 0b11) => (4,8),*/
+            
             (0b00, 0b00) => (8,8),
             (0b00, 0b01) => (16,16),
             (0b00, 0b10) => (32,32),
