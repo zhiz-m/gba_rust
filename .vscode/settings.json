@@ -1,0 +1,8 @@
+{
+    "rust-analyzer.cargo.features": [
+        "print_cps",
+        "debug_instr"
+    ],
+    "rust-analyzer.cargo.allFeatures": false,
+    "rust-analyzer.cargo.autoreload": true
+}

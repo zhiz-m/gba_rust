@@ -113,6 +113,11 @@ impl Bus {
         res
     }
 
+    // -------- miscellaneous methods to provide bulk read access. Intended for PPU only with no special functions. 
+    pub fn bulk_read_word(&self, addr: usize, num: usize) -> &[u8] {
+        &self.mem[addr .. addr+num]
+    }
+
     // -------- helper functions
 
     fn internal_write_byte(&mut self, addr: usize, val: u8) {

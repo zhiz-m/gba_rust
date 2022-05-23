@@ -58,7 +58,8 @@ pub struct CPU{
     halt: bool,
     //interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
 
-    pub debug: u32,
+    #[cfg(feature="debug_instr")]
+    pub debug_cnt: u32,
 }
 
 impl CPU{
@@ -100,11 +101,12 @@ impl CPU{
             
             halt: false,
             //interrupt: 0,
-
-            debug: 0,
+            
+            #[cfg(feature="debug_instr")]
+            debug_cnt: 0,
         };
-        res.set_reg(13, 0x03007F00);
-        res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
+        //res.set_reg(13, 0x03007F00);
+        //res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
 
         // set CPSR for sys mode
         res.set_cpsr(0b11111);
@@ -596,7 +598,9 @@ impl CPU{
             //println!("{} {:#034b}", self.op_mode as u32, self.reg[Register::CPSR as usize]);
             match self.spsr_map.get(&self.op_mode){
                 Some(&opmode) => opmode,
-                None => panic!("msr called on R=1, but this mode has no SPSR"),
+                None => {
+                    panic!("msr called on R=1, but this mode has no SPSR")
+                },
             }
         };
         let res = if (self.instr >> 25) & 1 == 0 { // register
@@ -1997,30 +2001,36 @@ impl CPU{
 
     // ---------- misc
     fn print_pc(&mut self, bus: &Bus) {
-        if self.debug == 0{
-            //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
-            return;
+        #[cfg(feature="debug_instr")]
+        {
+            if self.debug_cnt == 0{
+                //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
+                return;
+            }
+            self.debug_cnt -= 1;
+            if self.read_flag(Flag::T){
+                println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
+            }
+            else{
+                println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+            }
+            print!("    ");
+            for i in 0..16 {
+                print!("R{}: {:x}, ", i, self.read_reg(i));
+            }
+            println!();
+            print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202));
+            println!();
         }
-        self.debug -= 1;
-        if self.read_flag(Flag::T){
-            println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
-        }
-        else{
-            println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
-        }
-        print!("    ");
-        for i in 0..16 {
-            print!("R{}: {:x}, ", i, self.read_reg(i));
-        }
-        println!();
-        print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202));
-        println!();
     }
 
     fn debug(&mut self, msg: &str) {
-        if self.debug > 0{
-            self.debug -= 1;
-            print!("{}", msg);
+        #[cfg(feature="debug_instr")]
+        {
+            if self.debug_cnt > 0{
+                self.debug_cnt -= 1;
+                print!("{}", msg);
+            }
         }
     }
 

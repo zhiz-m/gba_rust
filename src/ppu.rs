@@ -2,21 +2,40 @@ use crate::{
     bus::Bus,
 };
 
+use std::mem;
+
 #[derive(Clone, Copy)]
-pub struct Pixel {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
+pub enum Pixel {
+    Colour(u8,u8,u8), // r, g, b
+    Transparent,
 }
 
 impl Pixel{
-    pub fn new(r: u8, g: u8, b: u8) -> Pixel{
+    pub fn new_colour(r: u8, g: u8, b: u8) -> Pixel{
         assert!(r < 32 && g < 32 && b < 32);
-        return Pixel { r, g, b }
+        return Pixel::Colour(r,g,b)
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
-        (self.r as f32 / 32., self.g as f32 / 32., self.b as f32 / 32.)
+        if let &Pixel::Colour(r,g,b) = self{
+            (r as f32 / 32., g as f32 / 32., b as f32 / 32.)
+        }
+        else{
+            (0.,0.,0.)
+        }
+    }
+
+    pub fn overwrite(&mut self, new_pixel: Pixel) {
+        if let Pixel::Colour(r_old, g_old, b_old) = self{
+            if let Pixel::Colour(r,g,b) = new_pixel{
+                *r_old = r;
+                *b_old = g;
+                *g_old = b;
+            }
+        }
+        else{
+            panic!("overwritten pixel should not be transparent");
+        }
     }
 }
 
@@ -28,7 +47,7 @@ pub struct ScreenBuffer {
 impl ScreenBuffer{
     pub fn new() -> ScreenBuffer{
         return ScreenBuffer{
-            buffer: vec![vec![Pixel::new(0,0,0); 240]; 160],
+            buffer: vec![vec![Pixel::new_colour(0,0,0); 240]; 160],
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel){
@@ -50,6 +69,8 @@ pub struct PPU {
     cur_line: u8, // current line being processed. 
     cur_scanline: [Pixel; 240],
 
+    cur_priority: u8,
+
     disp_cnt: u16,
     disp_stat: u16,
 
@@ -66,7 +87,9 @@ impl PPU {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: [Pixel::new(0,0,0); 240],
+            cur_scanline: [Pixel::new_colour(0,0,0); 240],
+
+            cur_priority: 0,
 
             disp_cnt: 0,
             disp_stat: 0,
@@ -78,9 +101,6 @@ impl PPU {
     pub fn check_cpu_interrupt(&mut self) -> u16 {
         let res = self.cpu_interrupt;
         self.cpu_interrupt = 0;
-        if res > 0{
-            //println!("ppu cpu_interrupt: {:#018b}", res);
-        }
         res
     }
 
@@ -97,7 +117,9 @@ impl PPU {
         self.clock_cur -= 1;
 
         if self.buffer_ready{
-            Some(self.buffer.clone())
+            let mut res = ScreenBuffer::new();
+            mem::swap(&mut self.buffer, &mut res);
+            Some(res)
         }
         else{
             None
@@ -175,13 +197,27 @@ impl PPU {
     }
 
     fn process_scanline(&mut self, bus: &Bus) {
-        match self.disp_cnt & 0b111 {
-            4 => self.process_bg_mode_4(bus),
-            _ => {}
+        self.cur_scanline = [Pixel::new_colour(0,0,0); 240];
+        for priority in (0..4).rev(){
+            self.cur_priority = priority;
+            // process background
+            match self.disp_cnt & 0b111 {
+                4 => self.process_bg_mode_4(bus),
+                _ => {}
+            }
+
+            // process sprites
+            self.process_sprites(bus);
         }
     }
 
+    // -------- background processing methods
+
     fn process_bg_mode_4(&mut self, bus: &Bus) {
+        // assume that one background of priority 3 is drawn
+        if self.cur_priority < 3 {
+            return;
+        }
         let mut addr = 0x06000000 + self.cur_line as usize * 240;
 
         // frame number
@@ -190,22 +226,118 @@ impl PPU {
         }
 
         for i in 0..240 {
-            self.cur_scanline[i] = self.process_palette_colour(bus.read_byte(addr + i), false, bus);
+            self.cur_scanline[i].overwrite(self.process_palette_colour(bus.read_byte(addr + i), false, bus));
+        }
+    }
+
+    // -------- sprite processing
+    fn process_sprites(&mut self, bus: &Bus) {
+        let map_mode = (self.disp_cnt >> 6) & 1 > 0; // 0 means 2D mapping. 1 means 1D mapping. 
+        let base_oam_addr = 0x7000000;
+
+        for k in (0..128).rev() {
+            // process sprite attributes
+            let attr0 = bus.read_halfword(base_oam_addr + k * 8);
+            let obj_mode = (attr0 >> 8) & 0b11;
+            if obj_mode == 0b10 {
+                // no rendering
+                continue;
+            }
+            let attr2 = bus.read_halfword(base_oam_addr + k * 8 + 4);
+            let cur_p = ((attr2 >> 10) & 0b11) as u8;
+            if cur_p != self.cur_priority{
+                continue;
+            }
+
+            let density = (attr0 >> 13) & 1 > 0; // 0 means 4 bits per pixel, 1 means 8 bits per pixel
+            let tile_size = if density {
+                64
+            }
+            else{
+                32
+            };
+            
+            let attr1 = bus.read_halfword(base_oam_addr + k * 8 + 2);
+            let base_tile_index = attr2 & 0b1111111111;
+            if self.disp_cnt & 0b111 >= 3 && base_tile_index < 512 {
+                continue; // ignore lower charblock on bitmap modes
+            }
+            let addr = base_tile_index as usize * 32 + 0x6010000;
+
+            let y = attr0 & 0b11111111;
+            let x = attr1 & 0b11111111;
+
+            // width, height
+            let (w,h) = self.get_sprite_dimensions((attr0 >> 14) as u8, (attr1 >> 14) as u8);
+            let row_size = tile_size as usize * w as usize;
+
+            for i in 0..h as usize{
+                // todo: consider 2d mapping
+                let row = bus.bulk_read_word(addr + row_size * i, row_size);
+                for j in 0..w as usize{
+                    
+                    let pal = 
+                    // 4 bits per pixel
+                    if !density { 
+                        if j & 1 > 0{
+                            row[j >> 1] >> 4
+                        }
+                        else{
+                            row[j >> 1]
+                        }
+                    }
+                    // 8 bits per pixel
+                    else{
+                        row[j]
+                    };
+                    let pixel = self.process_palette_colour(pal, true, bus);
+
+                    // TODO: process affine transformations
+                    if i as u8 + y as u8 == self.cur_line && (j + x as usize) < 240{
+                        self.cur_scanline[j + x as usize].overwrite(pixel);
+                    }
+                }
+            }
+        }
+        
+    }
+
+    // returns width, height
+    fn get_sprite_dimensions(&self, shape: u8, size: u8) -> (u8, u8) {
+        match(shape, size) {
+            (0b00, 0b00) => (8,8),
+            (0b00, 0b01) => (16,16),
+            (0b00, 0b10) => (32,32),
+            (0b00, 0b11) => (64,64),
+            (0b01, 0b00) => (16,8),
+            (0b01, 0b01) => (32,8),
+            (0b01, 0b10) => (32,16),
+            (0b01, 0b11) => (64,32),
+            (0b10, 0b00) => (8,16),
+            (0b10, 0b01) => (8,32),
+            (0b10, 0b10) => (16,32),
+            (0b10, 0b11) => (32,64),
+            _ => panic!("invalid sprite shape and/or size")
         }
     }
 
     // ------- helper functions
 
     fn process_15bit_colour(&self, halfword: u16) -> Pixel {
-        Pixel::new((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
+        Pixel::new_colour((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
     }
 
-    fn process_palette_colour(&self, palette_no: u8, is_sprite: bool, bus: &Bus) -> Pixel {
-        let mut addr = 0x05000000 + palette_no as u32 * 2;
+    fn process_palette_colour(&self, palette_index: u8, is_sprite: bool, bus: &Bus) -> Pixel {
+        let mut addr = 0x05000000 + palette_index as u32 * 2;
         if is_sprite{
             addr += 0x200;
         }
-        self.process_15bit_colour(bus.read_halfword(addr as usize))
+        let index = bus.read_halfword(addr as usize);
+        match index{
+            0 => Pixel::Transparent,
+            _ => self.process_15bit_colour(index)
+        } 
+        
     }
 
     /*

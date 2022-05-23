@@ -48,16 +48,25 @@ impl GBA {
     pub fn start(&mut self) -> Result<(), &'static str> {
         let mut clock: u64 = 0;
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        //let start_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        
+        #[cfg(feature="print_cps")]
+        let mut last_clock_print_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
-            
-            if clock % 16000000 == 0{
-                /*let since = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().checked_sub(start_time).unwrap().as_secs();
-                if since > 0{
-                    let cps = clock / since;
-                    println!("clocks per second: {}", cps);
-                }*/
-                self.cpu.debug += 200;
+            if clock % (16 * 1024 * 1024) == 0{
+                #[cfg(feature="print_cps")]
+                {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                    let since = now.checked_sub(last_clock_print_time).unwrap().as_secs();
+                    if since > 0{
+                        let cps = 16. * 1024. * 1024. / since as f32;
+                        last_clock_print_time = now;
+                        println!("clocks per second: {:#.3}", cps);
+                    }
+                }
+                #[cfg(feature="debug_instr")]
+                {
+                    self.cpu.debug_cnt += 200;
+                }
             }
 
             //self.cpu.debug = true;
@@ -101,7 +110,7 @@ impl GBA {
 }
 
 fn main() {
-    let rom_path = env::args().nth(1).unwrap();
+    let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
 
     let (tx, rx) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
