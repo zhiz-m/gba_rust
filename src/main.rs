@@ -47,6 +47,8 @@ impl GBA {
 
     pub fn start(&mut self) -> Result<(), &'static str> {
         let mut clock: u64 = 0;
+
+        #[cfg(not(feature="no_limit_cps"))]
         let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         
         #[cfg(feature="print_cps")]
@@ -56,9 +58,9 @@ impl GBA {
                 #[cfg(feature="print_cps")]
                 {
                     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                    let since = now.checked_sub(last_clock_print_time).unwrap().as_secs();
+                    let since = now.checked_sub(last_clock_print_time).unwrap().as_millis();
                     if since > 0{
-                        let cps = 16. * 1024. * 1024. / since as f32;
+                        let cps = 16. * 1024. * 1024. * 1000. / since as f64;
                         last_clock_print_time = now;
                         println!("clocks per second: {:#.3}", cps);
                     }
@@ -68,8 +70,6 @@ impl GBA {
                     self.cpu.debug_cnt += 200;
                 }
             }
-
-            //self.cpu.debug = true;
 
             // check for halting (pause cpu)
             if self.bus.check_cpu_halt_request() {
@@ -98,6 +98,7 @@ impl GBA {
             
             clock += 1;
 
+            #[cfg(not(feature="no_limit_cps"))]
             if clock % config::CPU_EXECUTION_INTERVAL_CLOCKS == 0{
                 while SystemTime::now().duration_since(UNIX_EPOCH).unwrap().checked_sub(last_finished_time).unwrap().as_nanos() < config::CPU_EXECUTION_INTERVAL_NS as u128{
                     // polling

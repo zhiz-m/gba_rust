@@ -2,7 +2,7 @@ use crate::{
     bus::Bus,
 };
 
-use std::mem;
+use std::{mem, num::Wrapping};
 
 #[derive(Clone, Copy)]
 pub enum Pixel {
@@ -25,12 +25,12 @@ impl Pixel{
         }
     }
 
-    pub fn overwrite(&mut self, new_pixel: Pixel) {
+    pub fn overwrite(&mut self, new_pixel: &Pixel) {
         if let Pixel::Colour(r_old, g_old, b_old) = self{
             if let Pixel::Colour(r,g,b) = new_pixel{
-                *r_old = r;
-                *g_old = g;
-                *b_old = b;
+                *r_old = *r;
+                *g_old = *g;
+                *b_old = *b;
             }
         }
         else{
@@ -65,6 +65,9 @@ pub struct PPU {
     buffer: ScreenBuffer,
     buffer_ready: bool,
 
+    sprite_buff: Vec<Vec<Pixel>>,
+    affine_sprite_buff: Vec<Vec<Pixel>>,
+
     is_hblank: bool,
     cur_line: u8, // current line being processed. 
     cur_scanline: [Pixel; 240],
@@ -84,6 +87,9 @@ impl PPU {
 
             buffer: ScreenBuffer::new(),
             buffer_ready: false,
+
+            sprite_buff: vec![vec![Pixel::Transparent; 64]; 64],
+            affine_sprite_buff: vec![vec![Pixel::Transparent; 128]; 128],
 
             is_hblank: false,
             cur_line: 0,
@@ -226,7 +232,7 @@ impl PPU {
         }
 
         for i in 0..240 {
-            self.cur_scanline[i].overwrite(self.process_palette_colour(bus.read_byte(addr + i), false, bus));
+            self.cur_scanline[i].overwrite(&self.process_palette_colour(bus.read_byte(addr + i), false, false, bus));
         }
     }
 
@@ -250,63 +256,195 @@ impl PPU {
             }
 
             let density = (attr0 >> 13) & 1 > 0; // 0 means 4 bits per pixel, 1 means 8 bits per pixel
-            let tile_size = if density {
+            let pal_bank = ((attr2 >> 12) << 4) as u8;
+            
+            /*let tile_size = if density {
                 64
             }
             else{
                 32
-            };
+            };*/
             
             let attr1 = bus.read_halfword(base_oam_addr + k * 8 + 2);
             let base_tile_index = attr2 & 0b1111111111;
             if self.disp_cnt & 0b111 >= 3 && base_tile_index < 512 {
                 continue; // ignore lower charblock on bitmap modes
             }
-            let addr = base_tile_index as usize * 32 + 0x6010000;
+            //let addr = base_tile_index as usize * 32 + 0x6010000;
             
             let y = attr0 & 0b11111111;
-            let x = attr1 & 0b11111111;
+            let x = attr1 & 0b111111111;
+
+            let affine = (attr0 >> 8) & 1 > 0;
+
+            let y_flip = (attr1 >> 12) & 1 > 0;
+            let x_flip = (attr1 >> 13) & 1 > 0;
 
             // width, height in pixels
             let (w,h) = self.get_sprite_dimensions((attr0 >> 14) as u8, (attr1 >> 14) as u8);
-            let row_size = tile_size as usize * w as usize / 8;
+            //let row_size = tile_size as usize * w as usize / 8;
 
-            let tile_data = bus.bulk_read_word(addr, tile_size as usize * w as usize * h as usize / 64);
+            // todo: consider 2d mapping. the below needs to be changed
+            //let tile_data = bus.bulk_read_byte(addr, tile_size as usize * w as usize * h as usize / 64);
+
+            //if self.cur_line == 1 {
+            //    println!("base tile index: {:#x}", base_tile_index);
+            //}
+            
+            // NOTE: these pixels are replaced directly (not using Pixel::overwrite())
+            
 
             for i in 0..h as usize{
-                // todo: consider 2d mapping
+                
                 //let row = bus.bulk_read_word(addr + row_size * i, row_size);
                 for j in 0..w as usize{
                     let offset_pixels = (i >> 3) * (w as usize >> 3) * 64 + (j >> 3) * 64 + ((i & 0b111) * 8 + (j & 0b111));
+                    
                     let pal = 
                     // 4 bits per pixel
                     if !density { 
+                        let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + (offset_pixels >> 1)) % 32768;
                         if offset_pixels & 1 > 0{
-                            tile_data[offset_pixels >> 1] >> 4
+                            (bus.read_byte(cur_addr) >> 4) + pal_bank
                         }
                         else{
-                            tile_data[offset_pixels >> 1]
+                            (bus.read_byte(cur_addr) & 0b1111) + pal_bank
                         }
                     }
                     // 8 bits per pixel
                     else{
-                        tile_data[offset_pixels]
+                        let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + offset_pixels) % 32768;
+                        bus.read_byte(cur_addr)
                     };
-                    let pixel = self.process_palette_colour(pal, true, bus);
+                    let pixel = self.process_palette_colour(pal, !density, true, bus);
 
-                    if self.cur_line == 0 && i == 5 && j == 3{
-                        //println!("r {}, g: {}, b: {}", pixel.to_float().0, pixel.to_float().1, pixel.to_float().2);
-                        println!("addr: {:#x}, addr_row: {:#x}", addr, addr + row_size * i);
-                    }
+                    //if self.cur_line == 0 && i == 5 && j == 3{
+                    //    //println!("r {}, g: {}, b: {}", pixel.to_float().0, pixel.to_float().1, pixel.to_float().2);
+                    //    println!("addr: {:#x}, addr_row: {:#x}", addr, addr + row_size * i);
+                    //}
 
-                    // TODO: process affine transformations
-                    if i as u8 + y as u8 == self.cur_line && (j + x as usize) < 240{
-                        self.cur_scanline[j + x as usize].overwrite(pixel);
+                    let (i_final, j_final) = 
+                    if !affine{
+                        let i_trans = if y_flip {
+                            w as usize-i-1
+                            //w as u16-i as u16-1
+                        }
+                        else{
+                            i
+                            //i as u16
+                        };
+
+                        let j_trans = if x_flip {
+                            h as usize-j-1
+                            //h as u16 - j as u16 - 1 
+                        }
+                        else{
+                            j
+                            //j as u16
+                        };
+
+                        //if i_trans as u8 + y as u8 == self.cur_line && (j_trans + x as usize) & 0b11111111 < 240{
+                        //    self.cur_scanline[(j_trans + x as usize) & 0b11111111].overwrite(&pixel);
+                        //}
+                        (i_trans, j_trans)
+
+                        //((i_trans + y) as u8 as u16, (j_trans + x as u16) & 0b111111111)
                     }
+                    else{
+                        (i,j)
+                    };
+                    self.sprite_buff[i_final][j_final] = pixel;
+                    /*
+                    else{
+                        let p0x = x + (w as u16 >> 1);
+                        let p0y = y + (h as u16 >> 1);
+                        let cx = x + j as u16 - p0x;
+                        let cy = y + i as u16 - p0y;
+                        (((pc*cx + pd*cy) >> 8) + p0y, ((pa*cx + pb*cy) >> 8) + p0x)
+                    };
+                    let is_in_rect = if !affine || !affine_is_double {
+                        i_final >= y as u16 && i_final < y as u16 + h as u16 && 
+                        j_final >= x as u16 && j_final < x as u16 + w as u16
+                    }
+                    else{
+                        i_final >= y - (h as u16 >> 1) && i_final < y + (h as u16 >> 1) * 3 && 
+                        j_final >= x - (w as u16 >> 1) && j_final < x + (w as u16 >> 1) * 3
+                    };
+                    if is_in_rect && i_final as u8 == self.cur_line && j_final < 240{
+                        self.cur_scanline[j_final as usize].overwrite(pixel);
+                    }*/
                 }
+            }
+
+            //let final_sprite_buff = 
+
+            if !affine{
+                self.draw_sprite_buff(false, false, x as usize, y as usize, w as usize, h as usize);
+            }
+            else{                
+                let affine_is_double = (attr0 >> 9) > 0;
+                let affine_obj_addr = ((attr1 >> 9) & 0b11111) as usize * 32 + base_oam_addr;
+                let pa = bus.read_halfword(affine_obj_addr + 6);
+                let pb = bus.read_halfword(affine_obj_addr + 14);
+                let pc = bus.read_halfword(affine_obj_addr + 22);
+                let pd = bus.read_halfword(affine_obj_addr + 30);
+
+                let mut affine_w = w as u16;
+                let mut affine_h = h as u16;
+                if affine_is_double {
+                    affine_w *= 2;
+                    affine_h *= 2;
+                }
+
+                for i in 0..affine_h {
+                    for j in 0..affine_w {
+                        let cx = (Wrapping(j) - Wrapping(affine_w >> 1)).0;
+                        let cy = (Wrapping(i) - Wrapping(affine_h >> 1)).0;
+
+                        let ox = ((pa*cx + pb*cy) as i16 >> 8) as u16 + (w as u16 >> 1);
+                        let oy = ((pc*cx + pd*cy) as i16 >> 8) as u16  + (h as u16 >> 1);
+
+                        //if i==0 && j==0 {
+                        //    println!("cx: {}, cy: {}, ox: {}, oy: {}", cx, cy, ox, oy);
+                        //}
+
+                        if ox < w as u16 && oy < h as u16 {
+                            self.affine_sprite_buff[i as usize][j as usize] = self.sprite_buff[oy as usize][ox as usize];
+                        }
+                        else{
+                            self.affine_sprite_buff[i as usize][j as usize] = Pixel::Transparent;
+                        }
+                    } 
+                }
+
+                self.draw_sprite_buff(true, affine_is_double, x as usize, y as usize, w as usize, h as usize);
             }
         }
         
+    }
+
+    fn draw_sprite_buff(&mut self, is_affine: bool, affine_is_double: bool, x: usize, y: usize, w: usize, h: usize) {
+        let mut i = self.cur_line as usize - y as usize;
+        if affine_is_double{
+            i += h >> 1;
+        }
+        if i < h {
+            for j in 0..w{
+                let mut j_trans = j + x;
+                if affine_is_double{
+                    j_trans -= w >> 1;
+                }
+                if j_trans & 0b111111111 < 240{
+                    let pixel = if is_affine {
+                        self.affine_sprite_buff[i][j]
+                    }
+                    else{
+                        self.sprite_buff[i][j]
+                    };
+                    self.cur_scanline[j_trans & 0b111111111].overwrite(&pixel);
+                }
+            }
+        }
     }
 
     // returns width, height in terms of pixels
@@ -347,17 +485,16 @@ impl PPU {
         Pixel::new_colour((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
     }
 
-    fn process_palette_colour(&self, palette_index: u8, is_sprite: bool, bus: &Bus) -> Pixel {
+    fn process_palette_colour(&self, palette_index: u8, is_4bpp: bool, is_sprite: bool, bus: &Bus) -> Pixel {
+        if palette_index == 0 || (is_4bpp && palette_index & 0b1111 == 0) {
+            return Pixel::Transparent;
+        }
         let mut addr = 0x05000000 + palette_index as u32 * 2;
         if is_sprite{
             addr += 0x200;
         }
         let index = bus.read_halfword(addr as usize);
-        match index{
-            0 => Pixel::Transparent,
-            _ => self.process_15bit_colour(index)
-        } 
-        
+        self.process_15bit_colour(index)
     }
 
     /*
