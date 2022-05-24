@@ -16,7 +16,10 @@ use frontend::{
 };
 use input_handler::InputHandler;
 
-use std::{env, thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{self, Sender, Receiver}};
+use std::{env, thread, time:: {SystemTime, UNIX_EPOCH}, sync::mpsc::{self, Sender, Receiver}};
+
+#[cfg(not(feature="no_limit_cps"))]
+use std::time::Duration;
 
 struct GBA {
     bus: Bus,
@@ -30,7 +33,7 @@ struct GBA {
 
 impl GBA {
     pub fn new(rom_path: String, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> GBA {
-        let mut res = GBA { 
+        let res = GBA { 
             bus: Bus::new(rom_path), 
             cpu: CPU::new(), 
             ppu: PPU::new(), 
@@ -39,8 +42,8 @@ impl GBA {
             key_receiver,
         };
 
-        // zero out input registers
-        res.input_handler.process_input(&res.key_receiver, &mut res.bus);
+        // zero out input registers (NOTE: handled by BIOS)
+        //res.input_handler.process_input(&res.key_receiver, &mut res.bus);
 
         res
     }
@@ -79,9 +82,11 @@ impl GBA {
             //self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
             // interrupts
             let interrupt = self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt();
-            let reg_if = self.bus.read_halfword(0x04000202);
-            let cur_reg_if = interrupt & self.bus.read_halfword(0x04000200);
-            self.bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+            if interrupt > 0 {
+                let reg_if = self.bus.read_halfword(0x04000202);
+                let cur_reg_if = interrupt & self.bus.read_halfword(0x04000200);
+                self.bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+            }
 
             // cpu clock
             self.cpu.clock(&mut self.bus);

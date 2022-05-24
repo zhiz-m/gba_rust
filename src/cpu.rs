@@ -1,4 +1,7 @@
-use std::{collections::HashMap, process::exit, cmp::min, num::Wrapping, io::{self, Write}};
+#![allow(non_camel_case_types)]
+#![allow(non_snake_case)]
+
+use std::{collections::HashMap, cmp::min, num::Wrapping};
 use crate::bus::Bus;
 
 #[derive(Copy, Clone, PartialEq)]
@@ -12,13 +15,13 @@ enum Register{
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
 enum OperatingMode{
-    Usr,
-    Fiq, 
-    Irq,
-    Svc,
-    Abt, 
-    Sys, 
-    Und
+    Usr = 0,
+    Fiq = 1, 
+    Irq = 2,
+    Svc = 3,
+    Abt = 4, 
+    Sys = 5, 
+    Und = 6
 }
 /*
 #[derive(PartialEq)]
@@ -33,7 +36,7 @@ enum Flag{
     C = 29,
     V = 28,
     I = 7,
-    F = 6,
+    //F = 6,
     T = 5,
 }
 
@@ -48,7 +51,7 @@ pub struct CPU{
 
     op_mode: OperatingMode, 
     
-    reg_map: HashMap<OperatingMode, [Register; 16]>,
+    reg_map: [[Register; 16]; 7],
     spsr_map: HashMap<OperatingMode, Register>,
 
     clock_cur: u32,
@@ -75,18 +78,17 @@ impl CPU{
             //actual_pc: 0x080002f0,
             actual_pc: 0,
 
-            //op_mode: OperatingMode::Svc,
             op_mode: OperatingMode::Sys,
 
-            reg_map: HashMap::from([
-                (OperatingMode::Usr, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13, Register::R14, Register::R15]),
-                (OperatingMode::Sys, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13, Register::R14, Register::R15]),
-                (OperatingMode::Fiq, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8_fiq, Register::R9_fiq, Register::R10_fiq, Register::R11_fiq, Register::R12_fiq, Register::R13_fiq, Register::R14_fiq, Register::R15]),
-                (OperatingMode::Svc, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_svc, Register::R14_svc, Register::R15]),
-                (OperatingMode::Abt, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_abt, Register::R14_abt, Register::R15]),
-                (OperatingMode::Irq, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_irq, Register::R14_irq, Register::R15]),
-                (OperatingMode::Und, [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_und, Register::R14_und, Register::R15]),
-            ]),
+            reg_map: [
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13, Register::R14, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8_fiq, Register::R9_fiq, Register::R10_fiq, Register::R11_fiq, Register::R12_fiq, Register::R13_fiq, Register::R14_fiq, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_irq, Register::R14_irq, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_svc, Register::R14_svc, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_abt, Register::R14_abt, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13, Register::R14, Register::R15],
+                [Register::R0, Register::R1, Register::R2, Register::R3, Register::R4, Register::R5, Register::R6, Register::R7, Register::R8, Register::R9, Register::R10, Register::R11, Register::R12, Register::R13_und, Register::R14_und, Register::R15],
+            ],
             spsr_map: HashMap::from([
                 (OperatingMode::Fiq, Register::SPSR_fiq),
                 (OperatingMode::Svc, Register::SPSR_svc),
@@ -100,7 +102,6 @@ impl CPU{
             thumb_modify_flags: true,
             
             halt: false,
-            //interrupt: 0,
             
             #[cfg(feature="debug_instr")]
             debug_cnt: 0,
@@ -138,9 +139,6 @@ impl CPU{
                 }
             };
             //self.interrupt = 0;
-        }
-        if self.clock_cur == 0{
-            //self.print_pc();
         }
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
@@ -957,7 +955,7 @@ impl CPU{
         //self.debug(&format!(" addr: {:#x}, L: {}, W: {}, U: {}", addr, L, W, U));
         //println!("{}",&format!(" addr: {:#x}, L: {}, W: {}, U: {}, pre: {}", addr, L, W, U, pre));
 
-        let mut reg_list = self.instr & 0b1111111111111111;
+        let reg_list = self.instr & 0b1111111111111111;
         
         // undefined operation: no registers in list
         //let mut zero_reg_list = false;
@@ -1003,7 +1001,7 @@ impl CPU{
         for i in 0..16 {
             if (1 << i) & reg_list > 0 {
                 
-                let reg = self.reg_map[&if S && (!r15_appear || !L) {OperatingMode::Usr} else {self.op_mode}][i as usize];
+                let reg = self.reg_map[if S && (!r15_appear || !L) {OperatingMode::Usr as usize} else {self.op_mode as usize}][i as usize];
                 if L {
                     self.reg[reg as usize] = bus.read_word(addr + delt);
                     if i == 15 {
@@ -1188,17 +1186,16 @@ impl CPU{
                 if shift_amount == 0 && !is_immediate{
                     self.operand2 = cur;
                 }
-                else{
-                    if shift_amount > 0{
-                        let shift_mod = shift_amount & 0b11111;
-                        self.shifter_carry = (cur >> (if shift_mod > 0 {shift_mod} else {32} - 1)) & 1;
-                        self.operand2 = cur.rotate_right(shift_amount);
-                    }
-                    else{
-                        self.shifter_carry = cur & 1;
-                        self.operand2 = (cur >> 1) | ((self.read_flag(Flag::C) as u32) << 31)
-                    }
+                else if shift_amount > 0{
+                    let shift_mod = shift_amount & 0b11111;
+                    self.shifter_carry = (cur >> (if shift_mod > 0 {shift_mod} else {32} - 1)) & 1;
+                    self.operand2 = cur.rotate_right(shift_amount);
                 }
+                else{
+                    self.shifter_carry = cur & 1;
+                    self.operand2 = (cur >> 1) | ((self.read_flag(Flag::C) as u32) << 31)
+                }
+                
             },
             _ => {}
         }
@@ -1219,12 +1216,14 @@ impl CPU{
         }
     }
 
+    #[inline]
     fn process_operand1(&mut self) -> u32 {
         let reg = (self.instr >> 16) & 0b1111;
         self.operand1 = self.read_reg(reg);
         0
     }
 
+    #[inline]
     fn process_reg_dest(&mut self) -> u32 {
         self.reg_dest = (self.instr >> 12) & 0b1111;
         0
@@ -1988,7 +1987,7 @@ impl CPU{
                 self.set_reg(14, offset.0);
             }
             true => {
-                let offset = Wrapping(self.read_reg(14)) + Wrapping((offset << 1));
+                let offset = Wrapping(self.read_reg(14)) + Wrapping(offset << 1);
                 //print!(" value placed into R15: {:#010x}", offset);
                 self.set_reg(14, (self.actual_pc + 2) | 1);
                 self.actual_pc = offset.0;
@@ -2132,11 +2131,13 @@ impl CPU{
         self.reg[Register::R14 as usize] = sp;
     }*/
 
+    #[inline(always)]
     fn read_flag(&self, f: Flag) -> bool {
         let s = f as u32;
         (self.reg[Register::CPSR as usize] >> s) & 1 > 0
     }
 
+    #[inline(always)]
     fn set_flag(&mut self, f: Flag, val: bool) {
         let s = f as u32;
         if val{
@@ -2147,14 +2148,16 @@ impl CPU{
         }
     }
 
+    #[inline(always)]
     fn read_reg(&self, reg: u32) -> u32 {
-        let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
-        self.reg[*reg as usize]
+        let reg = self.reg_map[self.op_mode as usize][reg as usize];
+        self.reg[reg as usize]
     }
 
+    #[inline(always)]
     fn set_reg(&mut self, reg: u32, val: u32) {
-        let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
-        self.reg[*reg as usize] = val;
+        let reg = self.reg_map[self.op_mode as usize][reg as usize];
+        self.reg[reg as usize] = val;
     }
 
     fn set_cpsr(&mut self, val: u32) {

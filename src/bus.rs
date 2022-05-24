@@ -97,6 +97,7 @@ impl Bus {
     }
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
+    #[inline(always)]
     pub fn check_cpu_halt_request(&mut self) -> bool {
         if self.cpu_halt_request {
             self.cpu_halt_request = false;
@@ -107,6 +108,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn check_cpu_interrupt(&mut self) -> u16 {
         let res = self.cpu_interrupt;
         self.cpu_interrupt = 0;
