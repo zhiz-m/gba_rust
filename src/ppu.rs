@@ -208,6 +208,21 @@ impl PPU {
             self.cur_priority = priority;
             // process background
             match self.disp_cnt & 0b111 {
+                0 => {
+                    self.process_tiled_bg(0, false, bus);
+                    self.process_tiled_bg(1, false, bus);
+                    self.process_tiled_bg(2, false, bus);
+                    self.process_tiled_bg(3, false, bus);
+                },
+                1 => {
+                    self.process_tiled_bg(0, false, bus);
+                    self.process_tiled_bg(1, false, bus);
+                    self.process_tiled_bg(2, true, bus);
+                },
+                2 => {
+                    self.process_tiled_bg(2, true, bus);
+                    self.process_tiled_bg(3, true, bus);
+                },
                 4 => self.process_bg_mode_4(bus),
                 _ => {}
             }
@@ -237,12 +252,98 @@ impl PPU {
     }
 
     // -------- tiled background processing
-    fn process_tiled_background(&mut self, bg_num: usize, is_affine: bool, bus: &Bus) {
+    fn process_tiled_bg(&mut self, bg_num: usize, is_affine: bool, bus: &Bus) {
         let bg_cnt = bus.read_halfword(0x04000008 + 2 * bg_num);
-        if self.cur_priority != bg_cnt as u8 & 0b11 {
+        if self.cur_priority != bg_cnt as u8 & 0b11 || (self.disp_cnt >> (8 + bg_num)) & 1 == 0 {
             return;
         }
+        let (w, h) = self.get_tiled_bg_dimensions(bg_cnt >> 14, is_affine);
+        // if 0: 4bpp, if 1: 8bpp
+        let density = (bg_cnt >> 7) & 1 > 0;
+        let wrapping = !is_affine || (bg_cnt >> 13) & 1 > 0;
+        let base_screenblock_addr = 0x6000000 + ((bg_cnt as usize >> 8) & 0b11111) * 2048;
+        let base_charblock_addr = 0x6000000 + ((bg_cnt as usize >> 2) & 0b11) * 0x4000;
 
+        let x = 0 - bus.read_halfword(0x04000010 + 4 * bg_num);
+        let y = 0 - bus.read_halfword(0x04000012 + 4 * bg_num);
+
+        let i_rel = self.cur_line as u16 - y;
+
+        for j in 0..240 {  
+            let j_rel = j - x;
+
+            let mut ox = j_rel;
+            let mut oy = i_rel;
+
+            // TODO: affine transforms
+
+            // get pixel data. assumes ox and oy are relative to the background. 
+            if !wrapping && (ox >= w || oy >= h){
+                // no wrapping, so pixel is out of bounds. do nothing
+                continue;
+            }
+
+            ox %= w;
+            oy %= h;
+
+            let cur_screenblock_addr = base_screenblock_addr + ((oy as usize / 256) * w as usize / 256 + ox as usize / 256) * 2048;
+            
+            // relative to current screenblock
+            let ox_rel = ox % 256;
+            let oy_rel = oy % 256;
+
+            //let offset_screen_entry = (oy_rel as usize >> 3) * 32 + (ox_rel as usize >> 3) * 64 + ((oy_rel as usize & 0b111) * 8 + (ox_rel as usize & 0b111));
+            let offset_screen_entry = (oy_rel >> 3) * 32 + (ox_rel >> 3);
+            let screen_entry = bus.read_halfword(cur_screenblock_addr + ((offset_screen_entry as usize) << 1));
+
+            // relative to current tile
+            let mut px = ox_rel & 0b111;
+            let mut py = oy_rel & 0b111;
+
+            if (screen_entry >> 10) & 1 > 0{
+                px = 8-px-1;
+            }
+            if (screen_entry >> 11) & 1 > 0{
+                py = 8-py-1;
+            }
+
+            let offset_pixels = (py << 3) as usize + px as usize;
+            let pal_bank = ((screen_entry >> 12) << 4) as u8; 
+
+            let tile_addr = base_charblock_addr + (screen_entry as usize & 0b1111111111) * if density {64} else {32};
+            let pal = 
+            if !density {
+                let cur_addr = tile_addr + (offset_pixels << 1);
+                if offset_pixels & 1 > 0{
+                    (bus.read_byte(cur_addr) >> 4) + pal_bank
+                }
+                else{
+                    (bus.read_byte(cur_addr) & 0b1111) + pal_bank
+                }
+            }
+            else{
+                let cur_addr = tile_addr + offset_pixels;
+                bus.read_byte(cur_addr)
+            };
+
+            let pixel = self.process_palette_colour(pal, !density, false, bus);
+            self.cur_scanline[j as usize].overwrite(&pixel);
+        }
+    }
+
+    // returns width, height in pixels
+    fn get_tiled_bg_dimensions(&self, sz_flag: u16, is_affine: bool) -> (u16, u16) {
+        match (sz_flag, is_affine) {
+            (0b00, false) => (256, 256),
+            (0b01, false) => (512, 256),
+            (0b10, false) => (256, 512),
+            (0b11, false) => (512, 512),
+            (0b00, true) => (128, 128),
+            (0b01, true) => (256, 256),
+            (0b10, true) => (512, 512),
+            (0b11, true) => (1024, 1024),
+            _ => panic!("invalid sz_flag for tiled bg dimensions")
+        }
     }
 
     // -------- sprite processing
