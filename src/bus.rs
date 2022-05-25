@@ -147,15 +147,14 @@ impl Bus {
     }
 
     fn addr_mirror(addr: usize) -> usize {
-        if addr >= 0x4000000 && addr < 0x4700000 {
-            return (addr % 0x0010000) + 0x4000000;
-        }
+        //if addr >= 0x4000000 && addr < 0x4700000 {
+        //    return (addr % 0x0010000) + 0x4000000;
+        //}
         if addr >= 0x3000000 && addr < 0x4000000 {
-            let addr = (addr % 0x8000 ) + 0x3000000;
+            return (addr % 0x8000) + 0x3000000;
             //if addr == 0x3007ffc{
             //    panic!();
             //}
-            return addr;
         }
 
         addr

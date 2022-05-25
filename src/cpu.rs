@@ -1999,7 +1999,7 @@ impl CPU{
     }
 
     // ---------- misc
-    fn print_pc(&mut self, bus: &Bus) {
+    pub fn print_pc(&mut self, bus: &Bus) {
         #[cfg(feature="debug_instr")]
         {
             if self.debug_cnt == 0{
@@ -2018,7 +2018,7 @@ impl CPU{
                 print!("R{}: {:x}, ", i, self.read_reg(i));
             }
             println!();
-            print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202));
+            print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}, IME: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202), bus.read_byte(0x4000208) & 1);
             println!();
         }
     }
@@ -2046,8 +2046,13 @@ impl CPU{
     }*/
     
     fn check_interrupt(&self, bus: &Bus) -> bool {
+        //if !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
+        //bus.read_word(0x04000208) & 1 == 1 && (bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200)) & 0b10 > 0{
+        //    println!("hblank interrupt");
+        //}
+
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_word(0x04000208) == 1 && // check that IME interrupt is turned on
+        bus.read_word(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
         bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 

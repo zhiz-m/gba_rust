@@ -65,9 +65,6 @@ pub struct PPU {
     buffer: ScreenBuffer,
     buffer_ready: bool,
 
-    sprite_buff: [[Pixel; 64]; 64],
-    affine_sprite_buff: [[Pixel; 128]; 128],
-
     is_hblank: bool,
     cur_line: u8, // current line being processed. 
     cur_scanline: [Pixel; 240],
@@ -87,9 +84,6 @@ impl PPU {
 
             buffer: ScreenBuffer::new(),
             buffer_ready: false,
-
-            sprite_buff: [[Pixel::Transparent; 64]; 64],
-            affine_sprite_buff: [[Pixel::Transparent; 128]; 128],
 
             is_hblank: false,
             cur_line: 0,
@@ -192,9 +186,11 @@ impl PPU {
             self.disp_stat |= 0b010;
         }
         // vcount interrupt request
-        if (self.disp_stat >> 5) & 1 > 0 && self.cur_line as u16 == self.disp_stat >> 8{
+        if self.cur_line as u16 == self.disp_stat >> 8{
+            if (self.disp_stat >> 5) & 1 > 0{
+                self.cpu_interrupt |= 0b100;
+            }
             self.disp_stat |= 0b100;
-            self.cpu_interrupt |= 0b100;
         }
 
         bus.store_halfword(0x04000004, self.disp_stat);
@@ -203,7 +199,8 @@ impl PPU {
     }
 
     fn process_scanline(&mut self, bus: &Bus) {
-        self.cur_scanline = [Pixel::new_colour(0,0,0); 240];
+        let backdrop_colour = bus.read_halfword(0x05000000);
+        self.cur_scanline = [self.process_15bit_colour(backdrop_colour); 240];
         for priority in (0..4).rev(){
             self.cur_priority = priority;
             // process background
@@ -223,6 +220,7 @@ impl PPU {
                     self.process_tiled_bg(2, true, bus);
                     self.process_tiled_bg(3, true, bus);
                 },
+                3 => self.process_bg_mode_3(bus),
                 4 => self.process_bg_mode_4(bus),
                 _ => {}
             }
@@ -233,6 +231,18 @@ impl PPU {
     }
 
     // -------- background processing methods
+
+    fn process_bg_mode_3(&mut self, bus: &Bus) {
+        // assume that one background of priority 3 is drawn
+        if self.cur_priority < 3 {
+            return;
+        }
+        let addr = 0x06000000 + self.cur_line as usize * 240 * 2;
+
+        for i in 0..240 {
+            self.cur_scanline[i].overwrite(&self.process_15bit_colour(bus.read_halfword(addr + i * 2)));
+        }
+    }
 
     fn process_bg_mode_4(&mut self, bus: &Bus) {
         // assume that one background of priority 3 is drawn
@@ -313,7 +323,7 @@ impl PPU {
             let tile_addr = base_charblock_addr + (screen_entry as usize & 0b1111111111) * if density {64} else {32};
             let pal = 
             if !density {
-                let cur_addr = tile_addr + (offset_pixels << 1);
+                let cur_addr = tile_addr + (offset_pixels >> 1);
                 if offset_pixels & 1 > 0{
                     (bus.read_byte(cur_addr) >> 4) + pal_bank
                 }
@@ -325,6 +335,10 @@ impl PPU {
                 let cur_addr = tile_addr + offset_pixels;
                 bus.read_byte(cur_addr)
             };
+
+            //if self.cur_line == 10 && bg_num == 0 {
+            //    println!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword(0x05000000 + pal as usize * 2));
+            //}
 
             let pixel = self.process_palette_colour(pal, !density, false, bus);
             self.cur_scanline[j as usize].overwrite(&pixel);
@@ -402,10 +416,10 @@ impl PPU {
             }
             // NOTE: these pixels are replaced directly (not using Pixel::overwrite())
             
-            let mut i = self.cur_line - y as u8;
-            if affine && affine_is_double {
-                i += (h >> 1) as u8;
-            }
+            let i = self.cur_line - y as u8;
+            //if affine && affine_is_double {
+            //    i += (h >> 1) as u8;
+            //}
             let i = i as u16;
             if i >= affine_h{
                 continue;
@@ -428,6 +442,7 @@ impl PPU {
                     read_pixel = true;
                 }
                 else{
+                    //let j = j - x;
                     let cx = (Wrapping(j) - Wrapping(affine_w >> 1)).0;
                     let cy = (Wrapping(i) - Wrapping(affine_h >> 1)).0;
                     ox = ((pa*cx + pb*cy) as i16 >> 8) as u16 + (w as u16 >> 1);
@@ -436,12 +451,17 @@ impl PPU {
                     read_pixel = ox < w && oy < h;
                 };
                 if read_pixel {
+                    // byte offset for each pixel
                     let offset_pixels = (oy as usize >> 3) * (w as usize >> 3) * 64 + (ox as usize >> 3) * 64 + ((oy as usize & 0b111) * 8 + (ox as usize & 0b111));
                     
                     let pal = 
                     // 4 bits per pixel
                     if !density { 
-                        let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + (offset_pixels >> 1)) % 32768;
+                        let mut cur_addr = base_tile_index as usize * 32 + (offset_pixels >> 1);
+                        if !map_mode{
+                            cur_addr += (oy as usize >> 3) * (128 - (w as usize >> 1)) * 8;
+                        }
+                        let cur_addr = 0x6010000 + (cur_addr % 32768);
                         if offset_pixels & 1 > 0{
                             (bus.read_byte(cur_addr) >> 4) + pal_bank
                         }
@@ -451,15 +471,19 @@ impl PPU {
                     }
                     // 8 bits per pixel
                     else{
-                        let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + offset_pixels) % 32768;
+                        let mut cur_addr = base_tile_index as usize * 32 + offset_pixels;
+                        if !map_mode{
+                            cur_addr += (oy as usize >> 3) * (128 - w as usize) * 8;
+                        }
+                        let cur_addr = 0x6010000 + (cur_addr % 32768);
                         bus.read_byte(cur_addr)
                     };
                     let pixel = self.process_palette_colour(pal, !density, true, bus);
                     
                     let mut tx = j as usize + x as usize;
-                    if affine && affine_is_double{
-                        tx -= w as usize >> 1;
-                    }
+                    //if affine && affine_is_double{
+                    //    tx -= w as usize >> 1;
+                    //}
                     tx &= 0b111111111;
                     if tx < 240 {
                         self.cur_scanline[tx].overwrite(&pixel);
@@ -516,8 +540,8 @@ impl PPU {
         if is_sprite{
             addr += 0x200;
         }
-        let index = bus.read_halfword(addr as usize);
-        self.process_15bit_colour(index)
+        let colour = bus.read_halfword(addr as usize);
+        self.process_15bit_colour(colour)
     }
 
     // -------- old code, kept for reference
