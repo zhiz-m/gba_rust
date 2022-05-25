@@ -2019,6 +2019,7 @@ impl CPU{
             }
             println!();
             print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}, IME: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202), bus.read_byte(0x4000208) & 1);
+            print!(" win_in: {:#018b}, win_out: {:#018b}", bus.read_halfword(0x04000048), bus.read_halfword(0x0400004a));
             println!();
         }
     }
