@@ -4,31 +4,29 @@ use crate::{
     bus::Bus,
 };
 
-use std::{mem, num::Wrapping};
+use std::{mem, num::Wrapping, cmp};
 
 #[derive(Clone, Copy)]
-pub enum Pixel {
-    Colour(u8,u8,u8), // r, g, b
-    Transparent,
-}
+pub struct Pixel(u8,u8,u8);
 
 impl Pixel{
-    pub fn new_colour(r: u8, g: u8, b: u8) -> Pixel{
-        assert!(r < 32 && g < 32 && b < 32);
-        return Pixel::Colour(r, g, b)
+    pub fn new(r: u8, g: u8, b: u8) -> Pixel{
+        //assert!(r < 32 && g < 32 && b < 32);
+        return Pixel(cmp::min(r, 31), cmp::min(g, 31), cmp::min(b, 31))
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
-        if let &Pixel::Colour(r, g, b) = self{
-            (r as f32 / 31., g as f32 / 31., b as f32 / 31.)
+        /*if let &Pixel(r, g, b) = self{
+            (self.0 as f32 / 31., self.1 as f32 / 31., self.2 as f32 / 31.)
         }
         else{
             (0., 0., 0.)
-        }
+        }*/
+        (self.0 as f32 / 31., self.1 as f32 / 31., self.2 as f32 / 31.)
     }
 
     pub fn overwrite(&mut self, new_pixel: &Pixel) {
-        if let Pixel::Colour(r_old, g_old, b_old) = self{
+        /*if let Pixel::Colour(r_old, g_old, b_old) = self{
             if let Pixel::Colour(r,g,b) = new_pixel{
                 *r_old = *r;
                 *g_old = *g;
@@ -37,7 +35,18 @@ impl Pixel{
         }
         else{
             panic!("overwritten pixel should not be transparent");
-        }
+        }*/
+        self.0 = new_pixel.0;
+        self.1 = new_pixel.1;
+        self.2 = new_pixel.2;
+    }
+
+    pub fn blend(pixel_front: Pixel, pixel_back: Pixel, a: u16, b: u16) -> Pixel {
+        Pixel(
+            ((pixel_front.0 as u16 * a + pixel_back.0 as u16 * b) >> 4) as u8,
+            ((pixel_front.1 as u16 * a + pixel_back.1 as u16 * b) >> 4) as u8,
+            ((pixel_front.2 as u16 * a + pixel_back.2 as u16 * b) >> 4) as u8,
+        )
     }
 }
 
@@ -49,7 +58,7 @@ pub struct ScreenBuffer {
 impl ScreenBuffer{
     pub fn new() -> ScreenBuffer{
         return ScreenBuffer{
-            buffer: Box::new([[Pixel::new_colour(0,0,0); 240]; 160]),
+            buffer: Box::new([[Pixel::new(0,0,0); 240]; 160]),
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel){
@@ -69,6 +78,17 @@ enum WindowType{
     W_full = 4, // W_full is used when there are no windows active
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum PixelType{
+    BG_0 = 0,
+    BG_1 = 1,
+    BG_2 = 2,
+    BG_3 = 3,
+    Sprite = 4,
+    Backdrop = 5,
+    //Sprite_blend = 6,
+}
+
 pub struct PPU {
     clock_cur: u32,
 
@@ -78,8 +98,11 @@ pub struct PPU {
     is_hblank: bool,
     cur_line: u8, // current line being processed. 
     cur_scanline: Box<[Pixel; 240]>,
+    cur_scanline_front: Box<[(Pixel, PixelType, WindowType); 240]>,
+    cur_scanline_back: Box<[(Pixel, PixelType, WindowType); 240]>,
 
-    window_scanlines: Box<[[bool; 240]; 5]>,
+    window_scanlines: Box<[[bool; 240]; 4]>,
+    active_windows: [bool; 4],
     window_flags: [u8; 4],
     is_windowing_active: bool,
     cur_window: WindowType,
@@ -102,9 +125,12 @@ impl PPU {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: Box::new([Pixel::new_colour(0,0,0); 240]),
+            cur_scanline: Box::new([Pixel::new(0,0,0); 240]),
+            cur_scanline_front: Box::new([(Pixel::new(0,0,0),PixelType::Backdrop,WindowType::W_full); 240]),
+            cur_scanline_back: Box::new([(Pixel::new(0,0,0),PixelType::Backdrop,WindowType::W_full); 240]),
 
-            window_scanlines: Box::new([[false; 240]; 5]),
+            window_scanlines: Box::new([[true; 240]; 4]),
+            active_windows: [false; 4],
             window_flags: [0; 4],
             is_windowing_active: false,
             cur_window: WindowType::W_full,
@@ -220,15 +246,17 @@ impl PPU {
 
     fn process_scanline(&mut self, bus: &Bus) {
         let backdrop_colour = bus.read_halfword(0x05000000);
-        self.cur_scanline.iter_mut().for_each(|x| *x = PPU::process_15bit_colour(backdrop_colour));
-        
+        //self.cur_scanline.iter_mut().for_each(|x| *x = PPU::process_15bit_colour(backdrop_colour));
+        self.cur_scanline_back.iter_mut().for_each(|x| *x = (PPU::process_15bit_colour(backdrop_colour), PixelType::Backdrop, WindowType::W_full));
+        self.cur_scanline_front.iter_mut().for_each(|x| *x = (PPU::process_15bit_colour(backdrop_colour), PixelType::Backdrop, WindowType::W_full));
+
         self.init_window_scanline(bus);
 
+        //println!("bldcnt: {:#018b}, bldalpha: {:#018b}", bus.read_halfword(0x04000050), bus.read_halfword(0x04000052));
+        //println!("bg0cnt: {:#018b}, bg2cnt: {:#018b}", bus.read_halfword(0x04000008), bus.read_halfword(0x04000012));
+
         for win in [WindowType::W_full, WindowType::W_obj, WindowType::W_out, WindowType::W_1, WindowType::W_0]{
-            if (win == WindowType::W_full) == (self.is_windowing_active){
-                continue;
-            }
-            if (win as u16) < 3 && (self.disp_cnt >> (13 + win as u16)) & 1 == 0{
+            if (win == WindowType::W_full) == (self.is_windowing_active) || (win as u16) < 4 && !self.active_windows[win as usize]{
                 continue;
             }
             self.cur_window = win;
@@ -237,19 +265,19 @@ impl PPU {
                 // process background
                 match self.disp_cnt & 0b111 {
                     0 => {
-                        self.process_tiled_bg(0, false, bus);
-                        self.process_tiled_bg(1, false, bus);
-                        self.process_tiled_bg(2, false, bus);
-                        self.process_tiled_bg(3, false, bus);
+                        self.process_tiled_bg(PixelType::BG_3, false, bus);
+                        self.process_tiled_bg(PixelType::BG_2, false, bus);
+                        self.process_tiled_bg(PixelType::BG_1, false, bus);
+                        self.process_tiled_bg(PixelType::BG_0, false, bus);
                     },
                     1 => {
-                        self.process_tiled_bg(0, false, bus);
-                        self.process_tiled_bg(1, false, bus);
-                        self.process_tiled_bg(2, true, bus);
+                        self.process_tiled_bg(PixelType::BG_2, true, bus);
+                        self.process_tiled_bg(PixelType::BG_1, false, bus);
+                        self.process_tiled_bg(PixelType::BG_0, false, bus);
                     },
                     2 => {
-                        self.process_tiled_bg(2, true, bus);
-                        self.process_tiled_bg(3, true, bus);
+                        self.process_tiled_bg(PixelType::BG_3, true, bus);
+                        self.process_tiled_bg(PixelType::BG_2, true, bus);
                     },
                     3 => self.process_bg_mode_3(bus),
                     4 => self.process_bg_mode_4(bus),
@@ -260,19 +288,59 @@ impl PPU {
                 self.process_sprites(false, bus);
             }
         }
-    }
+
+        // process blending; update self.cur_scanline
+        
+        let bld_cnt = bus.read_halfword(0x04000050);
+        let bld_alpha = bus.read_halfword(0x04000052);
+        let bw_fade = (bus.read_halfword(0x04000054) & 0b11111);
+        let bm = (bld_cnt >> 6) & 0b11;
+        let eva = bld_alpha & 0b11111;
+        let evb = (bld_alpha >> 8) & 0b11111;
+        println!("eva: {:#07b}, evb: {:#07b}, bw_fade: {:#07b}", eva, evb, bw_fade);
+
+        for i in 0..240 {
+            let (pixel1, pixel_type1, win)  = self.cur_scanline_front[i];
+            //if win == WindowType::W_full {
+            //    assert !(!self.is_windowing_active);
+            //}
+            if bm == 0 || pixel_type1 == PixelType::Backdrop || (bld_cnt >> pixel_type1 as u16) & 1 == 0 || (self.is_windowing_active && (self.window_flags[win as usize] >> 5) & 1 == 0) {
+                self.cur_scanline[i] = pixel1;
+                continue;
+            }
+
+            match bm {
+                0b10 => {
+                    self.cur_scanline[i] = Pixel::blend(pixel1, Pixel::new(31,31,31), 0b10000-bw_fade, bw_fade);
+                    continue;
+                }
+                0b11 => {
+                    self.cur_scanline[i] = Pixel::blend(pixel1, Pixel::new(0,0,0), 0b10000-bw_fade, bw_fade);
+                    continue;
+                }
+                _ => {}
+            }
+
+            let (pixel2, pixel_type2, _)  = self.cur_scanline_back[i];
+            if (bld_cnt >> (pixel_type2 as u16 + 8)) & 1 == 0{
+                self.cur_scanline[i] = pixel1;
+                continue;
+            }
+            self.cur_scanline[i] = Pixel::blend(pixel1, pixel2, eva, evb);
+        }
+    }  
 
     // -------- background processing methods
 
     fn process_bg_mode_3(&mut self, bus: &Bus) {
         // assume that one background of priority 3 is drawn
-        if !self.check_window_bg(0) || self.cur_priority < 3 {
+        if !self.check_window_bg(PixelType::BG_0) || self.cur_priority < 3 {
             return;
         }
         let addr = 0x06000000 + self.cur_line as usize * 240 * 2;
 
         for i in 0..240 {
-            self.update_cur_scanline(i, PPU::process_15bit_colour(bus.read_halfword(addr + i * 2)));
+            self.update_cur_scanline_bg(i, Some(PPU::process_15bit_colour(bus.read_halfword(addr + i * 2))), PixelType::BG_0);
         }
     }
 
@@ -283,25 +351,29 @@ impl PPU {
         }
         let mut addr = 0x06000000 + self.cur_line as usize * 240;
 
+        let pixel_type;
+
         // frame number
         if (self.disp_cnt >> 4) & 1 > 0 {
-            if !self.check_window_bg(1){
-                return;
-            }
+            pixel_type = PixelType::BG_1;
             addr += 0x9600;
         }
-        else if !self.check_window_bg(0){
+        else {
+            pixel_type = PixelType::BG_0;
+        }
+        if !self.check_window_bg(pixel_type){
             return;
         }
 
         for i in 0..240 {
-            self.update_cur_scanline(i as usize, PPU::process_palette_colour(bus.read_byte(addr + i), false, false, bus));
+            self.update_cur_scanline_bg(i as usize, PPU::process_palette_colour(bus.read_byte(addr + i), false, false, bus), pixel_type);
         }
     }
 
     // -------- tiled background processing
-    fn process_tiled_bg(&mut self, bg_num: usize, is_affine: bool, bus: &Bus) {
-        if !self.check_window_bg(bg_num){
+    fn process_tiled_bg(&mut self, pixel_type: PixelType, is_affine: bool, bus: &Bus) {
+        let bg_num = pixel_type as usize;
+        if !self.check_window_bg(pixel_type){
             return;
         }
         let bg_cnt = bus.read_halfword(0x04000008 + 2 * bg_num);
@@ -310,7 +382,7 @@ impl PPU {
         }
         let (w, h) = self.get_tiled_bg_dimensions(bg_cnt >> 14, is_affine);
         // if 0: 4bpp, if 1: 8bpp
-        let density = (bg_cnt >> 7) & 1 > 0;
+        let density = is_affine || (bg_cnt >> 7) & 1 > 0;
         let wrapping = !is_affine || (bg_cnt >> 13) & 1 > 0;
         let base_screenblock_addr = 0x6000000 + ((bg_cnt as usize >> 8) & 0b11111) * 2048;
         let base_charblock_addr = 0x6000000 + ((bg_cnt as usize >> 2) & 0b11) * 0x4000;
@@ -326,42 +398,83 @@ impl PPU {
             let mut ox = j_rel;
             let mut oy = i_rel;
 
-            // TODO: affine transforms
-
-            // get pixel data. assumes ox and oy are relative to the background. 
-            if !wrapping && (ox >= w || oy >= h){
-                // no wrapping, so pixel is out of bounds. do nothing
-                continue;
-            }
-
-            ox %= w;
-            oy %= h;
-
-            let cur_screenblock_addr = base_screenblock_addr + ((oy as usize / 256) * w as usize / 256 + ox as usize / 256) * 2048;
+            let (mut px, mut py, tile_addr);
+            let mut pal_bank = 0; // NOTE: pal_bank is unused for affine backgrounds
             
-            // relative to current screenblock
-            let ox_rel = ox % 256;
-            let oy_rel = oy % 256;
+            if is_affine {
+                let base_p_addr = 0x04000020 + 0x10 * (bg_num - 2);
+                let pa = bus.read_halfword(base_p_addr) as i16 as i32;
+                let pb = bus.read_halfword(base_p_addr + 2) as i16 as i32;
+                let pc = bus.read_halfword(base_p_addr + 4) as i16 as i32;
+                let pd = bus.read_halfword(base_p_addr + 6) as i16 as i32;
 
-            //let offset_screen_entry = (oy_rel as usize >> 3) * 32 + (ox_rel as usize >> 3) * 64 + ((oy_rel as usize & 0b111) * 8 + (ox_rel as usize & 0b111));
-            let offset_screen_entry = (oy_rel >> 3) * 32 + (ox_rel >> 3);
-            let screen_entry = bus.read_halfword(cur_screenblock_addr + ((offset_screen_entry as usize) << 1));
+                let dx = bus.read_word(0x04000028 + 0x10 * (bg_num - 2)) as i32;
+                let dy = bus.read_word(0x0400002c + 0x10 * (bg_num - 2)) as i32;
 
-            // relative to current tile
-            let mut px = ox_rel & 0b111;
-            let mut py = oy_rel & 0b111;
+                let cy = self.cur_line as i32;
+                let cx = j as i32;
 
-            if (screen_entry >> 10) & 1 > 0{
-                px = 8-px-1;
+                ox = ((dx + pa*cx + pb*cy) >> 8) as u16;
+                oy = ((dy + pc*cx + pd*cy) >> 8) as u16;
+
+                if !wrapping && (ox >= w || oy >= h){
+                    // no wrapping, so pixel is out of bounds. do nothing
+                    continue;
+                }
+                else{
+                    ox %= w;
+                    oy %= h;
+                }
+
+                let offset_screen_entry = (oy >> 3) * (w >> 3) + (ox >> 3);
+                let screen_entry = bus.read_byte(base_screenblock_addr + offset_screen_entry as usize);
+                px = ox & 0b111;
+                py = oy & 0b111;
+
+                tile_addr = base_charblock_addr + ((screen_entry as usize) << 6);
             }
-            if (screen_entry >> 11) & 1 > 0{
-                py = 8-py-1;
-            }
+            else{
+                // get pixel data. assumes ox and oy are relative to the background. 
+                
+                ox %= w;
+                oy %= h;
 
+                let mut cur_screenblock_addr = base_screenblock_addr;
+                let mut ox_rel = ox;
+                let mut oy_rel = oy;
+                if !is_affine{ 
+                    cur_screenblock_addr += ((oy as usize / 256) * w as usize / 256 + ox as usize / 256) * 2048;
+                    // relative to current screenblock
+                    ox_rel = ox % 256;
+                    oy_rel = oy % 256;
+                }
+                
+                //let offset_screen_entry = (oy_rel as usize >> 3) * 32 + (ox_rel as usize >> 3) * 64 + ((oy_rel as usize & 0b111) * 8 + (ox_rel as usize & 0b111));
+                let offset_screen_entry = if !is_affine{
+                    (oy_rel >> 3) * 32 + (ox_rel >> 3)
+                }
+                else{
+                    (oy_rel >> 3) * (w >> 3) + (ox_rel >> 3)
+                };
+                let screen_entry = bus.read_halfword(cur_screenblock_addr + ((offset_screen_entry as usize) << 1));
+
+                // relative to current tile
+                px = ox_rel & 0b111;
+                py = oy_rel & 0b111;
+
+                if (screen_entry >> 10) & 1 > 0{
+                    px = 8-px-1;
+                }
+                if (screen_entry >> 11) & 1 > 0{
+                    py = 8-py-1;
+                }
+
+                pal_bank = ((screen_entry >> 12) << 4) as u8; 
+
+                tile_addr = base_charblock_addr + (screen_entry as usize & 0b1111111111) * if density {64} else {32};
+            }
             let offset_pixels = (py << 3) as usize + px as usize;
-            let pal_bank = ((screen_entry >> 12) << 4) as u8; 
 
-            let tile_addr = base_charblock_addr + (screen_entry as usize & 0b1111111111) * if density {64} else {32};
             let pal = 
             if !density {
                 let cur_addr = tile_addr + (offset_pixels >> 1);
@@ -382,7 +495,7 @@ impl PPU {
             //}
 
             let pixel = PPU::process_palette_colour(pal, !density, false, bus);
-            self.update_cur_scanline(j as usize, pixel);
+            self.update_cur_scanline_bg(j as usize, pixel, pixel_type);
         }
     }
 
@@ -535,9 +648,9 @@ impl PPU {
                     tx &= 0b111111111;
                     if tx < 240 {
                         if !process_win_obj{
-                            self.update_cur_scanline(tx, pixel);
+                            self.update_cur_scanline_sprite(tx, pixel, gfx == 1);
                         }
-                        else if let Pixel::Colour(_,_,_) = pixel{
+                        else if let Some(pixel) = pixel{
                             self.set_window_scanline(WindowType::W_obj, tx);
                         }
                     }
@@ -549,20 +662,7 @@ impl PPU {
 
     // returns width, height in terms of pixels
     fn get_sprite_dimensions(&self, shape: u8, size: u8) -> (u16, u16) {
-        match(shape, size) {
-            /*(0b00, 0b00) => (1,1),
-            (0b00, 0b01) => (2,2),
-            (0b00, 0b10) => (4,4),
-            (0b00, 0b11) => (8,8),
-            (0b01, 0b00) => (2,1),
-            (0b01, 0b01) => (4,1),
-            (0b01, 0b10) => (4,2),
-            (0b01, 0b11) => (8,4),
-            (0b10, 0b00) => (1,2),
-            (0b10, 0b01) => (1,4),
-            (0b10, 0b10) => (2,4),
-            (0b10, 0b11) => (4,8),*/
-            
+        match(shape, size) {            
             (0b00, 0b00) => (8,8),
             (0b00, 0b01) => (16,16),
             (0b00, 0b10) => (32,32),
@@ -581,67 +681,104 @@ impl PPU {
 
     // ------- windows
 
-    #[inline(always)]
     fn init_window_scanline(&mut self, bus: &Bus) {
-        self.window_scanlines[0].iter_mut().for_each(|x| *x = false);
-        self.window_scanlines[1].iter_mut().for_each(|x| *x = false);
-        self.window_scanlines[2].iter_mut().for_each(|x| *x = false);
-        self.window_scanlines[3].iter_mut().for_each(|x| *x = true);
-        self.window_scanlines[4].iter_mut().for_each(|x| *x = true);
-
-        // set w0
-        let (l,r) = (bus.read_byte(0x04000045), bus.read_byte(0x04000044));
-        if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
-            let (l, mut r) = (bus.read_byte(0x04000041) as u16, bus.read_byte(0x04000040) as u16);
-            if l > r {
-                r += 1 << 8;
-            }
-            for i in l..r{
-                self.set_window_scanline(WindowType::W_0, i as u8 as usize);
-            }
-        }
-
-        // set w1
-        let (l,r) = (bus.read_byte(0x04000047), bus.read_byte(0x04000046));
-        if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
-            let (l, mut r) = (bus.read_byte(0x04000043) as u16, bus.read_byte(0x04000042) as u16);
-            if l > r {
-                r += 1 << 8;
-            }
-            for i in l..r{
-                self.set_window_scanline(WindowType::W_1, i as u8 as usize);
-            }
-        }
-
         self.is_windowing_active = (self.disp_cnt >> 13) > 0;
+        self.active_windows[0] = false;
+        self.active_windows[1] = false;
+        self.active_windows[2] = false;
+        self.active_windows[3] = false;
+        if !self.is_windowing_active {
+            return;
+        }
 
-        self.window_flags[WindowType::W_0 as usize] = bus.read_byte(0x04000048);
-        self.window_flags[WindowType::W_1 as usize] = bus.read_byte(0x04000049);
+        self.window_scanlines[3].iter_mut().for_each(|x| *x = true);
         self.window_flags[WindowType::W_out as usize] = bus.read_byte(0x0400004a);
-        self.window_flags[WindowType::W_obj as usize] = bus.read_byte(0x0400004b);
-    
-        self.process_sprites(true, bus);
+        self.active_windows[3] = true;
+        //println!("W_out: {:#010b}", self.window_flags[WindowType::W_out as usize]);
+
+        if self.disp_cnt >> (13 + WindowType::W_0 as u16) & 1 > 0{
+            self.window_scanlines[0].iter_mut().for_each(|x| *x = false);
+            // set w0
+            let (l,r) = (bus.read_byte(0x04000045), bus.read_byte(0x04000044));
+            if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
+                let (l, mut r) = (bus.read_byte(0x04000041) as u16, bus.read_byte(0x04000040) as u16);
+                if l > r {
+                    r += 1 << 8;
+                }
+                for i in l..r{
+                    self.set_window_scanline(WindowType::W_0, i as u8 as usize);
+                }
+            }
+            self.window_flags[WindowType::W_0 as usize] = bus.read_byte(0x04000048);
+            //println!("W_0: {:#010b}", self.window_flags[WindowType::W_0 as usize]);
+        }
+        if self.disp_cnt >> (13 + WindowType::W_1 as u16) & 1 > 0{
+            self.window_scanlines[1].iter_mut().for_each(|x| *x = false);
+            // set w1
+            let (l,r) = (bus.read_byte(0x04000047), bus.read_byte(0x04000046));
+            if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
+                let (l, mut r) = (bus.read_byte(0x04000043) as u16, bus.read_byte(0x04000042) as u16);
+                if l > r {
+                    r += 1 << 8;
+                }
+                for i in l..r{
+                    self.set_window_scanline(WindowType::W_1, i as u8 as usize);
+                }
+            }
+            self.window_flags[WindowType::W_1 as usize] = bus.read_byte(0x04000049);
+            //println!("W_1: {:#010b}", self.window_flags[WindowType::W_1 as usize]);
+        }
+
+        if self.disp_cnt >> (13 + WindowType::W_obj as u16) & 1 > 0{
+            self.window_scanlines[2].iter_mut().for_each(|x| *x = false);
+            self.process_sprites(true, bus);
+            self.window_flags[WindowType::W_obj as usize] = bus.read_byte(0x0400004b);
+            //println!("W_obj: {:#010b}", self.window_flags[WindowType::W_obj as usize]);
+        }
     }
 
-    fn check_window_bg(&self, bg_num: usize) -> bool {
-        self.cur_window == WindowType::W_full || (self.window_flags[self.cur_window as usize] >> (bg_num as u8)) & 1 > 0
+    // note: do not use for sprites
+    fn check_window_bg(&self, pixel_type: PixelType) -> bool {
+        self.cur_window == WindowType::W_full || (self.window_flags[self.cur_window as usize] >> (pixel_type as u8)) & 1 > 0
     }
 
     fn check_window_sprite(&self, process_win_obj: bool) -> bool {
         return process_win_obj || self.cur_window == WindowType::W_full || (self.window_flags[self.cur_window as usize] >> 4) & 1 > 0
     }
 
-    fn update_cur_scanline(&mut self, index: usize, pixel: Pixel) {
-        if self.get_window_scanline(self.cur_window, index) {
-            self.cur_scanline[index].overwrite(&pixel);
+    //fn should_update_pixel(&mut self, index: usize) -> bool {
+    //    self.cur_window == WindowType::W_full || self.get_window_scanline(self.cur_window, index)
+    //}
+
+    fn update_cur_scanline_bg(&mut self, index: usize, pixel: Option<Pixel>, pixel_type: PixelType) {
+        if self.cur_window == WindowType::W_full || self.get_window_scanline(self.cur_window, index) {
+            if let Some(pixel) = pixel{
+                self.cur_scanline_back[index] = self.cur_scanline_front[index];
+                self.cur_scanline_front[index] = (pixel, pixel_type, self.cur_window);
+                //self.cur_scanline[index].overwrite(&pixel);
+            }
+        }
+    }
+
+    fn update_cur_scanline_sprite(&mut self, index: usize, pixel: Option<Pixel>, is_blend: bool){
+        if self.cur_window == WindowType::W_full || self.get_window_scanline(self.cur_window, index) {
+            if let Some(pixel) = pixel{
+                if self.cur_scanline_front[index].1 != PixelType::Sprite/* && self.cur_scanline_front[index].1 != PixelType::Sprite_blend*/{
+                    self.cur_scanline_back[index] = self.cur_scanline_front[index];
+                }
+                self.cur_scanline_front[index] = (pixel, /*if is_blend{PixelType::Sprite_blend} else {PixelType::Sprite}*/ PixelType::Sprite, self.cur_window);
+            }
         }
     }
 
     // NOTE: do not set WindowType::W_out directly
     #[inline(always)]
     fn set_window_scanline(&mut self, window_type: WindowType, ind: usize) {
-        self.window_scanlines[window_type as usize][ind] = true;
-        self.window_scanlines[WindowType::W_out as usize][ind] = false;
+        if ind < 240 && self.window_scanlines[WindowType::W_out as usize][ind]{
+            self.window_scanlines[window_type as usize][ind] = true;
+            self.window_scanlines[WindowType::W_out as usize][ind] = false;
+            self.active_windows[window_type as usize] = true;
+        }
     }
 
     #[inline(always)]
@@ -652,19 +789,19 @@ impl PPU {
     // ------- helper functions
 
     fn process_15bit_colour(halfword: u16) -> Pixel {
-        Pixel::new_colour((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
+        Pixel::new((halfword & 0b11111) as u8, ((halfword >> 5) & 0b11111) as u8, ((halfword >> 10) & 0b11111) as u8)
     }
 
-    fn process_palette_colour(palette_index: u8, is_4bpp: bool, is_sprite: bool, bus: &Bus) -> Pixel {
+    fn process_palette_colour(palette_index: u8, is_4bpp: bool, is_sprite: bool, bus: &Bus) -> Option<Pixel> {
         if palette_index == 0 || (is_4bpp && palette_index & 0b1111 == 0) {
-            return Pixel::Transparent;
+            return None;
         }
         let mut addr = 0x05000000 + palette_index as u32 * 2;
         if is_sprite{
             addr += 0x200;
         }
         let colour = bus.read_halfword(addr as usize);
-        PPU::process_15bit_colour(colour)
+        Some(PPU::process_15bit_colour(colour))
     }
 
     // -------- old code, kept for reference
