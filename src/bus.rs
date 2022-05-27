@@ -1,20 +1,52 @@
-use std::{env, fs::File, io::Read};
+use std::{
+    env, fs::File, io::{Read, BufReader},
+    collections::HashSet,
+
+};
+use crate::{
+    dma_channel::DMA_Channel,
+    fast_hasher::FastHashBuilder,
+};
 
 const MEM_MAX: usize = 268435456;
 
 pub struct Bus{
-    mem: Vec<u8>,
+    mem: Box<[u8; MEM_MAX]>,
     cpu_halt_request: bool,
-    cpu_interrupt: u16,
+    addr_special_handling: HashSet<usize, FastHashBuilder>,
+    
+    pub is_any_dma_active: bool,
+    pub hblank_dma: bool,
+    pub vblank_dma: bool,
+    pub dma_channels: [DMA_Channel; 4],
 }
 
 impl Bus {
     pub fn new(rom_path : String) -> Bus{
         let mut res = Bus { 
-            mem: vec![0; 268435456],
+            mem: Box::new([0; MEM_MAX]),
             cpu_halt_request: false,
-            cpu_interrupt: 0,
+            addr_special_handling: HashSet::with_hasher(FastHashBuilder),
+            
+            is_any_dma_active: false,
+            hblank_dma: false,
+            vblank_dma: false,
+            dma_channels: [
+                DMA_Channel::new_disabled(0), 
+                DMA_Channel::new_disabled(1),
+                DMA_Channel::new_disabled(2),
+                DMA_Channel::new_disabled(3),
+            ]
         };
+
+        // load special addresses
+        res.addr_special_handling.insert(0x04000301);
+        res.addr_special_handling.insert(0x04000202);
+        res.addr_special_handling.insert(0x04000203);
+        res.addr_special_handling.insert(0x040000bb);
+        res.addr_special_handling.insert(0x040000c7); // + 12
+        res.addr_special_handling.insert(0x040000d3); // + 12
+        res.addr_special_handling.insert(0x040000df); // + 12
 
         // load BIOS
         let bios_path = env::var("GBA_RUST_BIOS").unwrap();
@@ -24,10 +56,14 @@ impl Bus {
         }
 
         // load ROM
-        let f = File::open(rom_path).unwrap().bytes();
-        for (i, x) in f.enumerate(){
-            res.store_byte(i + 0x08000000, x.unwrap());
-        };
+        let mut reader = BufReader::new(File::open(rom_path).unwrap());
+        reader.read(&mut res.mem[0x08000000..]).unwrap();
+
+        // load ROM
+        //let f = File::open(rom_path).unwrap().bytes();
+        //for (i, x) in f.enumerate(){
+        //    res.store_byte(i + 0x08000000, x.unwrap());
+        //};
 
         res
     }
@@ -108,11 +144,17 @@ impl Bus {
         }
     }
 
-    #[inline(always)]
+    /*#[inline(always)]
     pub fn check_cpu_interrupt(&mut self) -> u16 {
         let res = self.cpu_interrupt;
         self.cpu_interrupt = 0;
         res
+    }*/
+
+    pub fn cpu_interrupt(&mut self, interrupt: u16) {
+        let reg_if = self.read_halfword(0x04000202);
+        let cur_reg_if = interrupt & self.read_halfword(0x04000200);
+        self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
     }
 
     // -------- miscellaneous methods to provide bulk read access. Intended for PPU only with no special functions. 
@@ -121,26 +163,60 @@ impl Bus {
     //}
 
     // -------- helper functions
-
-    fn internal_write_byte(&mut self, addr: usize, val: u8) {
-        if addr == 0x04000301 {
-            if val >> 7 > 0 {
-                // todo: add handling for STOP state (pause sound, PPU and cpu)
-            }
-            else{
-                // request that CPU is paused until next interrupt
-                self.cpu_halt_request = true; 
+    
+    pub fn set_is_any_dma_active(&mut self) {
+        self.is_any_dma_active = false;
+        for i in 0..4{
+            if self.dma_channels[i].is_enabled{
+                self.is_any_dma_active = true;
+                //println!("dma enabled");
+                return;
             }
         }
+    }
 
-        // special handling for REG_IF, interrupt handling
-        else if addr == 0x04000202 || addr == 0x04000203 {
-            // current bit 0, incoming bit 0 -> result = 0
-            // current bit 1, incoming bit 1 -> result = 0
-            // current bit 1, incoming bit 0 -> result = 1
-            // current bit 0, incoming bit 1 -> result = 1
-            self.mem[addr] ^= val;
-            return;
+    fn internal_write_byte(&mut self, addr: usize, val: u8) {
+        //if addr == 0x040000bb {
+        //    println!("dma channel 0 write");
+        //}
+        //if self.addr_special_handling.contains(&addr){
+        if 0x040000bb <= addr && addr <= 0x04000301{
+            match addr{
+                0x04000301 => {
+                    if val >> 7 > 0 {
+                        // todo: add handling for STOP state (pause sound, PPU and cpu)
+                    }
+                    else{
+                        // request that CPU is paused until next interrupt
+                        self.cpu_halt_request = true; 
+                    }
+                },
+
+                // special handling for REG_IF, interrupt handling
+                0x04000202 | 0x04000203 => {
+                    // current bit 0, incoming bit 0 -> result = 0
+                    // current bit 1, incoming bit 1 -> result = 0
+                    // current bit 1, incoming bit 0 -> result = 1
+                    // current bit 0, incoming bit 1 -> result = 1
+                    self.mem[addr] ^= val;
+                    return;
+                },
+                0x040000bb | 0x040000c7 | 0x040000d3 | 0x040000df => {
+                    self.mem[addr] = val;
+                    let channel_no = (addr - 0x040000bb) / 12;
+                    let dma_channel = if val >> 7 > 0{
+                        DMA_Channel::new_enabled(channel_no, self)
+                    }
+                    else{
+                        DMA_Channel::new_disabled(channel_no)
+                    };
+                    self.dma_channels[channel_no] = dma_channel;
+                    self.set_is_any_dma_active();
+                    //println!("set dma flags");
+                    return;
+                }
+                _ => {},
+            }
         }
 
         self.mem[addr] = val;
@@ -150,8 +226,8 @@ impl Bus {
         //if addr >= 0x4000000 && addr < 0x4700000 {
         //    return (addr % 0x0010000) + 0x4000000;
         //}
-        if addr >= 0x3000000 && addr < 0x4000000 {
-            return (addr % 0x8000) + 0x3000000;
+        if addr >= 0x3FFFF00 && addr < 0x4000000 {
+            return (addr % 0x100) + 0x3007F00;
             //if addr == 0x3007ffc{
             //    panic!();
             //}

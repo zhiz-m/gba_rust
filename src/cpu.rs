@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 
 use std::{collections::HashMap, cmp::min, num::Wrapping};
-use crate::bus::Bus;
+use crate::{bus::Bus, dma_channel::DMA_Channel};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register{
@@ -118,8 +118,14 @@ impl CPU{
 
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
+            // check for halting (pause cpu)
+            if bus.check_cpu_halt_request() {
+                self.halt();
+            }
+
             //self.debug(&format!("halting: {}\n", self.halt));
             //self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
+
             self.clock_cur += 
             
             if self.check_interrupt(bus){
@@ -132,12 +138,16 @@ impl CPU{
             else if self.halt {
                 1 // consume clock cycle; do nothing
             }
+            else if self.check_dma(bus){
+                self.execute_dma(bus)
+            }
             else{
                 match self.read_flag(Flag::T) {
                     false => self.decode_execute_instruction_arm(bus),
                     true => self.decode_execute_instruction_thumb(bus)
                 }
             };
+            
             //self.interrupt = 0;
         }
         assert!(self.clock_cur > 0);
@@ -1083,7 +1093,7 @@ impl CPU{
             0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == self.read_flag(Flag::V)),
             0b1101 => self.read_flag(Flag::Z) || (self.read_flag(Flag::N) != self.read_flag(Flag::V)),
             0b1110 => true,
-            _ => panic!("cond field not valid")
+            _ => panic!("cond field not valid: instr: {:#034b}, pc: {:#x}", self.instr, self.actual_pc)
         }
     }
 
@@ -1998,79 +2008,20 @@ impl CPU{
         4
     }
 
-    // ---------- misc
-    pub fn print_pc(&mut self, bus: &Bus) {
-        #[cfg(feature="debug_instr")]
-        {
-            if self.debug_cnt == 0{
-                //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
-                return;
-            }
-            self.debug_cnt -= 1;
-            if self.read_flag(Flag::T){
-                println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
-            }
-            else{
-                println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
-            }
-            print!("    ");
-            for i in 0..16 {
-                print!("R{}: {:x}, ", i, self.read_reg(i));
-            }
-            println!();
-            print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}, IME: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202), bus.read_byte(0x4000208) & 1);
-            print!(" win_in: {:#018b}, win_out: {:#018b}", bus.read_halfword(0x04000048), bus.read_halfword(0x0400004a));
-            println!();
-        }
-    }
-
-    fn debug(&mut self, msg: &str) {
-        #[cfg(feature="debug_instr")]
-        {
-            if self.debug_cnt > 0{
-                self.debug_cnt -= 1;
-                print!("{}", msg);
-            }
-        }
-    }
-
     // ---------- interrupts and halting
     pub fn halt(&mut self) {
         self.halt = true;
     }
-
-    /*pub fn set_interrupt(&mut self, interrupt: u16) {
-        //if interrupt > 0{    
-            //self.debug(&format!("set_interrupt bits requested: {:#018b}\n", self.interrupt));
-        //}
-        self.interrupt = interrupt;
-    }*/
     
     fn check_interrupt(&self, bus: &Bus) -> bool {
-        //if !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        //bus.read_word(0x04000208) & 1 == 1 && (bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200)) & 0b10 > 0{
-        //    println!("hblank interrupt");
-        //}
-
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
         bus.read_word(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
         bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 
-    /*fn bus_set_reg_if(&mut self, bus: &mut Bus) {
-        let reg_if = bus.read_halfword(0x04000202);
-        let cur_reg_if = self.interrupt & bus.read_halfword(0x04000200);
-        
-        // NOTE: this only sets the bits that are 1 in cur_reg_if but 0 in reg_if.
-        // this is to prevent the acknowledgement of an existing interrupt (handled by bus)
-        bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
-        //bus.store_halfword(0x04000202, 1);
-    }*/
-
     // Mode: SVC (supervisor) for software interrupt
     //       IRQ (interrupt) for hardware interrupt
     fn execute_hardware_interrupt(&mut self) -> u32 {
-        //self.reg[Register::R14_irq as usize] = self.actual_pc;
         self.reg[Register::R14_irq as usize] = self.actual_pc + 4;
         let mut cpsr = self.reg[Register::CPSR as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;
@@ -2117,6 +2068,76 @@ impl CPU{
         self.set_cpsr(cpsr);
 
         3
+    }
+
+    // ---------- DMA
+    #[inline(always)]
+    pub fn check_dma(&self, bus: &Bus) -> bool {
+        bus.is_any_dma_active && bus.dma_channels.iter().any(|x| x.check_is_active(bus))
+    }
+
+    pub fn execute_dma(&mut self, bus: &mut Bus) -> u32 {
+        let mut res = 0;
+        let mut ex1 = false;
+        for i in 0..4 {
+            if !bus.dma_channels[i].check_is_active(bus){
+                continue;
+            }
+            // unsafe in order to prevent unnecessary cloning
+            unsafe {
+                let ptr = &mut bus.dma_channels[i] as *mut DMA_Channel;
+                res += (*ptr).execute_dma(bus);
+            }
+            ex1 = true;
+            // safe code here:
+            /*
+            let mut dma_channel = bus.dma_channels[i].clone();
+            res += dma_channel.execute_dma(bus);
+            bus.dma_channels[i] = dma_channel
+            */
+        };
+        assert!(ex1);
+        bus.hblank_dma = false;
+        bus.vblank_dma = false;
+        bus.set_is_any_dma_active();
+        //println!("dma executed");
+        res
+    }
+
+    // ---------- misc
+    pub fn print_pc(&mut self, bus: &Bus) {
+        #[cfg(feature="debug_instr")]
+        {
+            if self.debug_cnt == 0{
+                //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
+                return;
+            }
+            self.debug_cnt -= 1;
+            if self.read_flag(Flag::T){
+                println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
+            }
+            else{
+                println!("Executing instruction at pc {:#010x}\n   instr: {:#034b} ", self.actual_pc, self.instr);
+            }
+            print!("    ");
+            for i in 0..16 {
+                print!("R{}: {:x}, ", i, self.read_reg(i));
+            }
+            println!();
+            print!("N: {}, Z: {}, C: {}, V: {}, CPSR: {:#034b}, IE: {:#018b}, IF: {:#018b}, IME: {}", self.read_flag(Flag::N), self.read_flag(Flag::Z), self.read_flag(Flag::C), self.read_flag(Flag::V), self.reg[Register::CPSR as usize], bus.read_halfword(0x4000200), bus.read_halfword(0x4000202), bus.read_byte(0x4000208) & 1);
+            print!(" win_in: {:#018b}, win_out: {:#018b}", bus.read_halfword(0x04000048), bus.read_halfword(0x0400004a));
+            println!();
+        }
+    }
+
+    fn debug(&mut self, msg: &str) {
+        #[cfg(feature="debug_instr")]
+        {
+            if self.debug_cnt > 0{
+                self.debug_cnt -= 1;
+                print!("{}", msg);
+            }
+        }
     }
 
     // ---------- read and set helpers
@@ -2177,7 +2198,7 @@ impl CPU{
             0b11011 => OperatingMode::Und,
             0b11111 => OperatingMode::Sys,
             _ => {
-                panic!("invalid op mode");
+                panic!("invalid op mode: {}, instr: {:#034b}, pc: {:#x}", val, self.instr, self.actual_pc);
             },
         };
     }

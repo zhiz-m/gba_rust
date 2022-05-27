@@ -25,7 +25,7 @@ impl Pixel{
         (self.0 as f32 / 31., self.1 as f32 / 31., self.2 as f32 / 31.)
     }
 
-    pub fn overwrite(&mut self, new_pixel: &Pixel) {
+    /*pub fn overwrite(&mut self, new_pixel: &Pixel) {
         /*if let Pixel::Colour(r_old, g_old, b_old) = self{
             if let Pixel::Colour(r,g,b) = new_pixel{
                 *r_old = *r;
@@ -39,7 +39,7 @@ impl Pixel{
         self.0 = new_pixel.0;
         self.1 = new_pixel.1;
         self.2 = new_pixel.2;
-    }
+    }*/
 
     pub fn blend(pixel_front: Pixel, pixel_back: Pixel, a: u16, b: u16) -> Pixel {
         Pixel(
@@ -86,7 +86,7 @@ enum PixelType{
     BG_3 = 3,
     Sprite = 4,
     Backdrop = 5,
-    //Sprite_blend = 6,
+    Sprite_blend = 6,
 }
 
 pub struct PPU {
@@ -143,13 +143,13 @@ impl PPU {
             cpu_interrupt: 0,
         }
     }
-
+    /*
     #[inline(always)]
     pub fn check_cpu_interrupt(&mut self) -> u16 {
         let res = self.cpu_interrupt;
         self.cpu_interrupt = 0;
         res
-    }
+    }*/
 
     pub fn clock(&mut self, bus: &mut Bus) -> Option<ScreenBuffer> {
         // may clock more than once per call to this function
@@ -198,10 +198,11 @@ impl PPU {
 
             self.is_hblank = true;
 
-            // set hblank interrupt
+            // set hblank interrupt, dma
             if (self.disp_stat >> 4) & 1 > 0 {
                 self.cpu_interrupt |= 0b10;
             }
+            bus.hblank_dma = true;
 
             272
         }
@@ -223,8 +224,11 @@ impl PPU {
         self.disp_stat &= !0b111;
         if self.cur_line >= 160 {
             // set vblank interrupt
-            if self.cur_line == 160 && (self.disp_stat >> 3) & 1 > 0 {
-                self.cpu_interrupt |= 1;
+            if self.cur_line == 160{
+                if (self.disp_stat >> 3) & 1 > 0 {
+                    self.cpu_interrupt |= 1;
+                }
+                bus.vblank_dma = true;
             }
             self.disp_stat |= 0b001;
         }
@@ -240,6 +244,10 @@ impl PPU {
         }
 
         bus.store_halfword(0x04000004, self.disp_stat);
+        if self.cpu_interrupt > 0 {
+            bus.cpu_interrupt(self.cpu_interrupt);
+            self.cpu_interrupt = 0;
+        }
 
         res
     }
@@ -293,23 +301,30 @@ impl PPU {
         
         let bld_cnt = bus.read_halfword(0x04000050);
         let bld_alpha = bus.read_halfword(0x04000052);
-        let bw_fade = (bus.read_halfword(0x04000054) & 0b11111);
+        let bw_fade = bus.read_halfword(0x04000054) & 0b11111;
         let bm = (bld_cnt >> 6) & 0b11;
         let eva = bld_alpha & 0b11111;
         let evb = (bld_alpha >> 8) & 0b11111;
-        println!("eva: {:#07b}, evb: {:#07b}, bw_fade: {:#07b}", eva, evb, bw_fade);
+        //println!("eva: {:#07b}, evb: {:#07b}, bw_fade: {:#07b}", eva, evb, bw_fade);
 
         for i in 0..240 {
-            let (pixel1, pixel_type1, win)  = self.cur_scanline_front[i];
+            let (pixel1, mut pixel_type1, win)  = self.cur_scanline_front[i];
+            let cur_bm = if pixel_type1 == PixelType::Sprite_blend {
+                pixel_type1 = PixelType::Sprite;
+                0b01
+            }
+            else{
+                bm
+            };
             //if win == WindowType::W_full {
             //    assert !(!self.is_windowing_active);
             //}
-            if bm == 0 || pixel_type1 == PixelType::Backdrop || (bld_cnt >> pixel_type1 as u16) & 1 == 0 || (self.is_windowing_active && (self.window_flags[win as usize] >> 5) & 1 == 0) {
+            if cur_bm == 0 || pixel_type1 == PixelType::Backdrop || (bld_cnt >> pixel_type1 as u16) & 1 == 0 || (self.is_windowing_active && (self.window_flags[win as usize] >> 5) & 1 == 0) {
                 self.cur_scanline[i] = pixel1;
                 continue;
             }
 
-            match bm {
+            match cur_bm {
                 0b10 => {
                     self.cur_scanline[i] = Pixel::blend(pixel1, Pixel::new(31,31,31), 0b10000-bw_fade, bw_fade);
                     continue;
@@ -650,7 +665,7 @@ impl PPU {
                         if !process_win_obj{
                             self.update_cur_scanline_sprite(tx, pixel, gfx == 1);
                         }
-                        else if let Some(pixel) = pixel{
+                        else if let Some(_) = pixel{
                             self.set_window_scanline(WindowType::W_obj, tx);
                         }
                     }
@@ -763,10 +778,10 @@ impl PPU {
     fn update_cur_scanline_sprite(&mut self, index: usize, pixel: Option<Pixel>, is_blend: bool){
         if self.cur_window == WindowType::W_full || self.get_window_scanline(self.cur_window, index) {
             if let Some(pixel) = pixel{
-                if self.cur_scanline_front[index].1 != PixelType::Sprite/* && self.cur_scanline_front[index].1 != PixelType::Sprite_blend*/{
+                if self.cur_scanline_front[index].1 != PixelType::Sprite && self.cur_scanline_front[index].1 != PixelType::Sprite_blend{
                     self.cur_scanline_back[index] = self.cur_scanline_front[index];
                 }
-                self.cur_scanline_front[index] = (pixel, /*if is_blend{PixelType::Sprite_blend} else {PixelType::Sprite}*/ PixelType::Sprite, self.cur_window);
+                self.cur_scanline_front[index] = (pixel, if is_blend{PixelType::Sprite_blend} else {PixelType::Sprite}, self.cur_window);
             }
         }
     }

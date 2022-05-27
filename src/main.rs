@@ -4,6 +4,8 @@ mod ppu;
 mod frontend;
 mod config;
 mod input_handler;
+mod dma_channel;
+mod fast_hasher;
 
 use bus::Bus;
 use cpu::CPU;
@@ -74,19 +76,14 @@ impl GBA {
                 }
             }
 
-            // check for halting (pause cpu)
-            if self.bus.check_cpu_halt_request() {
-                self.cpu.halt();
-            }
-
             //self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
             // interrupts
-            let interrupt = self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt();
-            if interrupt > 0 {
-                let reg_if = self.bus.read_halfword(0x04000202);
-                let cur_reg_if = interrupt & self.bus.read_halfword(0x04000200);
-                self.bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
-            }
+            //let interrupt = self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt();
+            //if interrupt > 0 {
+            //    let reg_if = self.bus.read_halfword(0x04000202);
+            //    let cur_reg_if = interrupt & self.bus.read_halfword(0x04000200);
+            //    self.bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+            //}
 
             // cpu clock
             self.cpu.clock(&mut self.bus);
