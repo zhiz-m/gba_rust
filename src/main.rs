@@ -6,6 +6,7 @@ mod config;
 mod input_handler;
 mod dma_channel;
 mod fast_hasher;
+mod timer;
 
 use bus::Bus;
 use cpu::CPU;
@@ -74,7 +75,13 @@ impl GBA {
                 {
                     self.cpu.debug_cnt += 200;
                 }
+                
             }
+            //#[cfg(feature="debug_instr")]
+            //if clock > 77350000
+            //{
+            //    self.cpu.debug_cnt = 10000000;
+            //}
 
             //self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
             // interrupts

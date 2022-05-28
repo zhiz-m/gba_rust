@@ -15,3 +15,6 @@ piston2d-opengl_graphics = "0.79.0"
 debug_instr = []
 print_cps = []
 no_limit_cps = []
+
+[profile.dev]
+overflow-checks = false

@@ -289,6 +289,7 @@ impl PPU {
                     },
                     3 => self.process_bg_mode_3(bus),
                     4 => self.process_bg_mode_4(bus),
+                    5 => println!("current bg mode 5, not implemented yet"),
                     _ => {}
                 }
 

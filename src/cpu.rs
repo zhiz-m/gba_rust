@@ -63,6 +63,8 @@ pub struct CPU{
 
     #[cfg(feature="debug_instr")]
     pub debug_cnt: u32,
+    #[cfg(feature="debug_instr")]
+    bios_end: bool,
 }
 
 impl CPU{
@@ -105,6 +107,8 @@ impl CPU{
             
             #[cfg(feature="debug_instr")]
             debug_cnt: 0,
+            #[cfg(feature="debug_instr")]
+            bios_end: false,
         };
         //res.set_reg(13, 0x03007F00);
         //res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
@@ -118,6 +122,10 @@ impl CPU{
 
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
+            #[cfg(feature="debug_instr")]
+            if self.actual_pc == 0x8000000{
+                self.bios_end = true;
+            }
             // check for halting (pause cpu)
             if bus.check_cpu_halt_request() {
                 self.halt();
@@ -235,7 +243,10 @@ impl CPU{
                         self.debug("        branch");
                         self.execute_branch()
                     },
-                    0b100 => self.execute_block_data_transfer(bus),
+                    0b100 => {
+                        self.debug("        block data transfer");
+                        self.execute_block_data_transfer(bus)
+                    },
                     _ => {
                         print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
                         0
@@ -783,12 +794,18 @@ impl CPU{
 
         let reg = (self.instr >> 12) & 0b1111;
 
-        //print!(" reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr);
 
         let store_res = self.read_reg(reg) + if reg == Register::R15 as u32 {4} else {0};
 
         //self.debug(&format!(" addr: {:#x}, L: {}, store_res: {:#x}, rd: {}, IE: {:#018b}", addr, L, store_res, reg, bus.read_halfword(0x4000200)));
 
+        /*#[cfg(feature="debug_instr")]
+        if !L && addr < 0x004000{
+            self.debug_cnt += 2;
+            self.print_pc(bus);
+            self.debug(&format!(" reg: {}, base_reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, base_reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr));
+            panic!()
+        }*/
 
         // W flag
         if !P || (self.instr >> 21) & 1 == 1 {
@@ -1923,8 +1940,11 @@ impl CPU{
         for i in 0..8 {
             if reg_list & (1 << i) > 0{
                 num_reg += 1;
+                assert!(i != base_reg);
             }
         }
+
+        assert!(num_reg > 0);
 
         let mut cnt = 0;
         for i in 0..8 {
@@ -2044,6 +2064,8 @@ impl CPU{
     }
     
     fn execute_software_interrupt(&mut self) -> u32 {
+        //#[cfg(feature="debug_instr")]
+        //{self.debug_cnt += 200;}
         self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
             self.actual_pc + 2
         }
@@ -2079,6 +2101,7 @@ impl CPU{
     pub fn execute_dma(&mut self, bus: &mut Bus) -> u32 {
         let mut res = 0;
         let mut ex1 = false;
+        //println!("dma start");
         for i in 0..4 {
             if !bus.dma_channels[i].check_is_active(bus){
                 continue;
@@ -2096,6 +2119,7 @@ impl CPU{
             bus.dma_channels[i] = dma_channel
             */
         };
+        //println!("dma end");
         assert!(ex1);
         bus.hblank_dma = false;
         bus.vblank_dma = false;
@@ -2108,10 +2132,12 @@ impl CPU{
     pub fn print_pc(&mut self, bus: &Bus) {
         #[cfg(feature="debug_instr")]
         {
-            if self.debug_cnt == 0{
+            
+            if self.debug_cnt == 0 || !self.bios_end{
                 //println!("PC: {:#010x}\n  instr: {:#034b}", self.actual_pc, self.instr);
                 return;
             }
+            
             self.debug_cnt -= 1;
             if self.read_flag(Flag::T){
                 println!("Executing instruction at pc {:#010x}\n   instr: {:#018b} ", self.actual_pc, self.instr);
@@ -2133,7 +2159,7 @@ impl CPU{
     fn debug(&mut self, msg: &str) {
         #[cfg(feature="debug_instr")]
         {
-            if self.debug_cnt > 0{
+            if self.debug_cnt > 0 && self.bios_end{
                 self.debug_cnt -= 1;
                 print!("{}", msg);
             }

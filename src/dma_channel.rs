@@ -1,7 +1,5 @@
 #![allow(non_camel_case_types)]
 
-use std::num::Wrapping;
-
 use crate::bus::Bus;
 
 #[derive(Clone, Copy)]
