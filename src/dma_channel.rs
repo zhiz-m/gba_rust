@@ -112,12 +112,12 @@ impl DMA_Channel {
         //if !self.check_is_active(bus){
         //    return 0;
         //}
-        let dma_cnt = bus.read_word(0x040000b8 + 12 * self.channel_no);
+        let dma_cnt = bus.read_word_raw(0x040000b8 + 12 * self.channel_no);
 
         if self.is_repeating {
             self.num_transfers = dma_cnt as u16;
             if self.repeat_reset_dest {
-                self.dest_addr = bus.read_word(0x040000b4 + 12 * self.channel_no) as usize;
+                self.dest_addr = bus.read_word_raw(0x040000b4 + 12 * self.channel_no) as usize;
             }
         }
 
@@ -164,9 +164,9 @@ impl DMA_Channel {
         // if not repeating, set inactive and clear the associated bit in memory
         if !self.is_repeating {
             self.is_enabled = false;
-            let mut dma_cnt_upper = bus.read_byte(0x040000bb + 12 * self.channel_no);
+            let mut dma_cnt_upper = bus.read_byte_raw(0x040000bb + 12 * self.channel_no);
             dma_cnt_upper |= !(1 << 7);
-            bus.store_byte(0x040000bb + 12 * self.channel_no, dma_cnt_upper);
+            bus.store_byte_raw(0x040000bb + 12 * self.channel_no, dma_cnt_upper);
         }
         if self.raise_interrupt {
             bus.cpu_interrupt(1 << (8 + self.channel_no));

@@ -173,8 +173,8 @@ impl PPU {
     }
 
     fn _clock(&mut self, bus: &mut Bus) -> u32 {
-        self.disp_cnt = bus.read_halfword(0x04000000);
-        self.disp_stat = bus.read_halfword(0x04000004);
+        self.disp_cnt = bus.read_halfword_raw(0x04000000);
+        self.disp_stat = bus.read_halfword_raw(0x04000004);
 
         let res = 
 
@@ -219,7 +219,7 @@ impl PPU {
             }
         };
         // store VCOUNT
-        bus.store_byte(0x04000006, self.cur_line);
+        bus.store_byte_raw(0x04000006, self.cur_line);
 
         self.disp_stat &= !0b111;
         if self.cur_line >= 160 {
@@ -243,7 +243,7 @@ impl PPU {
             self.disp_stat |= 0b100;
         }
 
-        bus.store_halfword(0x04000004, self.disp_stat);
+        bus.store_halfword_raw(0x04000004, self.disp_stat);
         if self.cpu_interrupt > 0 {
             bus.cpu_interrupt(self.cpu_interrupt);
             self.cpu_interrupt = 0;
@@ -253,15 +253,15 @@ impl PPU {
     }
 
     fn process_scanline(&mut self, bus: &Bus) {
-        let backdrop_colour = bus.read_halfword(0x05000000);
+        let backdrop_colour = bus.read_halfword_raw(0x05000000);
         //self.cur_scanline.iter_mut().for_each(|x| *x = PPU::process_15bit_colour(backdrop_colour));
         self.cur_scanline_back.iter_mut().for_each(|x| *x = (PPU::process_15bit_colour(backdrop_colour), PixelType::Backdrop, WindowType::W_full));
         self.cur_scanline_front.iter_mut().for_each(|x| *x = (PPU::process_15bit_colour(backdrop_colour), PixelType::Backdrop, WindowType::W_full));
 
         self.init_window_scanline(bus);
 
-        //println!("bldcnt: {:#018b}, bldalpha: {:#018b}", bus.read_halfword(0x04000050), bus.read_halfword(0x04000052));
-        //println!("bg0cnt: {:#018b}, bg2cnt: {:#018b}", bus.read_halfword(0x04000008), bus.read_halfword(0x04000012));
+        //println!("bldcnt: {:#018b}, bldalpha: {:#018b}", bus.read_halfword_raw(0x04000050), bus.read_halfword_raw(0x04000052));
+        //println!("bg0cnt: {:#018b}, bg2cnt: {:#018b}", bus.read_halfword_raw(0x04000008), bus.read_halfword_raw(0x04000012));
 
         for win in [WindowType::W_full, WindowType::W_obj, WindowType::W_out, WindowType::W_1, WindowType::W_0]{
             if (win == WindowType::W_full) == (self.is_windowing_active) || (win as u16) < 4 && !self.active_windows[win as usize]{
@@ -300,9 +300,9 @@ impl PPU {
 
         // process blending; update self.cur_scanline
         
-        let bld_cnt = bus.read_halfword(0x04000050);
-        let bld_alpha = bus.read_halfword(0x04000052);
-        let bw_fade = bus.read_halfword(0x04000054) & 0b11111;
+        let bld_cnt = bus.read_halfword_raw(0x04000050);
+        let bld_alpha = bus.read_halfword_raw(0x04000052);
+        let bw_fade = bus.read_halfword_raw(0x04000054) & 0b11111;
         let bm = (bld_cnt >> 6) & 0b11;
         let eva = bld_alpha & 0b11111;
         let evb = (bld_alpha >> 8) & 0b11111;
@@ -356,7 +356,7 @@ impl PPU {
         let addr = 0x06000000 + self.cur_line as usize * 240 * 2;
 
         for i in 0..240 {
-            self.update_cur_scanline_bg(i, Some(PPU::process_15bit_colour(bus.read_halfword(addr + i * 2))), PixelType::BG_0);
+            self.update_cur_scanline_bg(i, Some(PPU::process_15bit_colour(bus.read_halfword_raw(addr + i * 2))), PixelType::BG_0);
         }
     }
 
@@ -382,7 +382,7 @@ impl PPU {
         }
 
         for i in 0..240 {
-            self.update_cur_scanline_bg(i as usize, PPU::process_palette_colour(bus.read_byte(addr + i), false, false, bus), pixel_type);
+            self.update_cur_scanline_bg(i as usize, PPU::process_palette_colour(bus.read_byte_raw(addr + i), false, false, bus), pixel_type);
         }
     }
 
@@ -392,7 +392,7 @@ impl PPU {
         if !self.check_window_bg(pixel_type){
             return;
         }
-        let bg_cnt = bus.read_halfword(0x04000008 + 2 * bg_num);
+        let bg_cnt = bus.read_halfword_raw(0x04000008 + 2 * bg_num);
         if self.cur_priority != bg_cnt as u8 & 0b11 || (self.disp_cnt >> (8 + bg_num)) & 1 == 0 {
             return;
         }
@@ -403,8 +403,8 @@ impl PPU {
         let base_screenblock_addr = 0x6000000 + ((bg_cnt as usize >> 8) & 0b11111) * 2048;
         let base_charblock_addr = 0x6000000 + ((bg_cnt as usize >> 2) & 0b11) * 0x4000;
 
-        let x = 0 - bus.read_halfword(0x04000010 + 4 * bg_num);
-        let y = 0 - bus.read_halfword(0x04000012 + 4 * bg_num);
+        let x = 0 - bus.read_halfword_raw(0x04000010 + 4 * bg_num);
+        let y = 0 - bus.read_halfword_raw(0x04000012 + 4 * bg_num);
 
         let i_rel = self.cur_line as u16 - y;
 
@@ -419,13 +419,13 @@ impl PPU {
             
             if is_affine {
                 let base_p_addr = 0x04000020 + 0x10 * (bg_num - 2);
-                let pa = bus.read_halfword(base_p_addr) as i16 as i32;
-                let pb = bus.read_halfword(base_p_addr + 2) as i16 as i32;
-                let pc = bus.read_halfword(base_p_addr + 4) as i16 as i32;
-                let pd = bus.read_halfword(base_p_addr + 6) as i16 as i32;
+                let pa = bus.read_halfword_raw(base_p_addr) as i16 as i32;
+                let pb = bus.read_halfword_raw(base_p_addr + 2) as i16 as i32;
+                let pc = bus.read_halfword_raw(base_p_addr + 4) as i16 as i32;
+                let pd = bus.read_halfword_raw(base_p_addr + 6) as i16 as i32;
 
-                let dx = bus.read_word(0x04000028 + 0x10 * (bg_num - 2)) as i32;
-                let dy = bus.read_word(0x0400002c + 0x10 * (bg_num - 2)) as i32;
+                let dx = bus.read_word_raw(0x04000028 + 0x10 * (bg_num - 2)) as i32;
+                let dy = bus.read_word_raw(0x0400002c + 0x10 * (bg_num - 2)) as i32;
 
                 let cy = self.cur_line as i32;
                 let cx = j as i32;
@@ -443,7 +443,7 @@ impl PPU {
                 }
 
                 let offset_screen_entry = (oy >> 3) * (w >> 3) + (ox >> 3);
-                let screen_entry = bus.read_byte(base_screenblock_addr + offset_screen_entry as usize);
+                let screen_entry = bus.read_byte_raw(base_screenblock_addr + offset_screen_entry as usize);
                 px = ox & 0b111;
                 py = oy & 0b111;
 
@@ -472,7 +472,7 @@ impl PPU {
                 else{
                     (oy_rel >> 3) * (w >> 3) + (ox_rel >> 3)
                 };
-                let screen_entry = bus.read_halfword(cur_screenblock_addr + ((offset_screen_entry as usize) << 1));
+                let screen_entry = bus.read_halfword_raw(cur_screenblock_addr + ((offset_screen_entry as usize) << 1));
 
                 // relative to current tile
                 px = ox_rel & 0b111;
@@ -495,19 +495,19 @@ impl PPU {
             if !density {
                 let cur_addr = tile_addr + (offset_pixels >> 1);
                 if offset_pixels & 1 > 0{
-                    (bus.read_byte(cur_addr) >> 4) + pal_bank
+                    (bus.read_byte_raw(cur_addr) >> 4) + pal_bank
                 }
                 else{
-                    (bus.read_byte(cur_addr) & 0b1111) + pal_bank
+                    (bus.read_byte_raw(cur_addr) & 0b1111) + pal_bank
                 }
             }
             else{
                 let cur_addr = tile_addr + offset_pixels;
-                bus.read_byte(cur_addr)
+                bus.read_byte_raw(cur_addr)
             };
 
             //if self.cur_line == 10 && bg_num == 0 {
-            //    println!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword(0x05000000 + pal as usize * 2));
+            //    println!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword_raw(0x05000000 + pal as usize * 2));
             //}
 
             let pixel = PPU::process_palette_colour(pal, !density, false, bus);
@@ -543,13 +543,13 @@ impl PPU {
 
         for k in (0..128).rev() {
             // process sprite attributes
-            let attr0 = bus.read_halfword(base_oam_addr + k * 8);
+            let attr0 = bus.read_halfword_raw(base_oam_addr + k * 8);
             let obj_mode = (attr0 >> 8) & 0b11;
             if obj_mode == 0b10 {
                 // no rendering
                 continue;
             }
-            let attr2 = bus.read_halfword(base_oam_addr + k * 8 + 4);
+            let attr2 = bus.read_halfword_raw(base_oam_addr + k * 8 + 4);
             let cur_p = ((attr2 >> 10) & 0b11) as u8;
             if !process_win_obj && cur_p != self.cur_priority{
                 continue;
@@ -563,7 +563,7 @@ impl PPU {
             let density = (attr0 >> 13) & 1 > 0; // 0 means 4 bits per pixel, 1 means 8 bits per pixel
             let pal_bank = ((attr2 >> 12) << 4) as u8;
             
-            let attr1 = bus.read_halfword(base_oam_addr + k * 8 + 2);
+            let attr1 = bus.read_halfword_raw(base_oam_addr + k * 8 + 2);
             let base_tile_index = attr2 & 0b1111111111;
             if self.disp_cnt & 0b111 >= 3 && base_tile_index < 512 {
                 continue; // ignore lower charblock on bitmap modes
@@ -576,10 +576,10 @@ impl PPU {
             let affine = (attr0 >> 8) & 1 > 0;
             let affine_is_double = (attr0 >> 9) > 0;
             let affine_obj_addr = ((attr1 >> 9) & 0b11111) as usize * 32 + base_oam_addr;
-            let pa = bus.read_halfword(affine_obj_addr + 6);
-            let pb = bus.read_halfword(affine_obj_addr + 14);
-            let pc = bus.read_halfword(affine_obj_addr + 22);
-            let pd = bus.read_halfword(affine_obj_addr + 30);
+            let pa = bus.read_halfword_raw(affine_obj_addr + 6);
+            let pb = bus.read_halfword_raw(affine_obj_addr + 14);
+            let pc = bus.read_halfword_raw(affine_obj_addr + 22);
+            let pd = bus.read_halfword_raw(affine_obj_addr + 30);
 
             let y_flip = (attr1 >> 12) & 1 > 0;
             let x_flip = (attr1 >> 13) & 1 > 0;
@@ -640,10 +640,10 @@ impl PPU {
                         }
                         let cur_addr = 0x6010000 + (cur_addr % 32768);
                         if offset_pixels & 1 > 0{
-                            (bus.read_byte(cur_addr) >> 4) + pal_bank
+                            (bus.read_byte_raw(cur_addr) >> 4) + pal_bank
                         }
                         else{
-                            (bus.read_byte(cur_addr) & 0b1111) + pal_bank
+                            (bus.read_byte_raw(cur_addr) & 0b1111) + pal_bank
                         }
                     }
                     // 8 bits per pixel
@@ -653,7 +653,7 @@ impl PPU {
                             cur_addr += (oy as usize >> 3) * (128 - w as usize) << 3;
                         }
                         let cur_addr = 0x6010000 + (cur_addr % 32768);
-                        bus.read_byte(cur_addr)
+                        bus.read_byte_raw(cur_addr)
                     };
                     let pixel = PPU::process_palette_colour(pal, !density, true, bus);
                     
@@ -708,16 +708,16 @@ impl PPU {
         }
 
         self.window_scanlines[3].iter_mut().for_each(|x| *x = true);
-        self.window_flags[WindowType::W_out as usize] = bus.read_byte(0x0400004a);
+        self.window_flags[WindowType::W_out as usize] = bus.read_byte_raw(0x0400004a);
         self.active_windows[3] = true;
         //println!("W_out: {:#010b}", self.window_flags[WindowType::W_out as usize]);
 
         if self.disp_cnt >> (13 + WindowType::W_0 as u16) & 1 > 0{
             self.window_scanlines[0].iter_mut().for_each(|x| *x = false);
             // set w0
-            let (l,r) = (bus.read_byte(0x04000045), bus.read_byte(0x04000044));
+            let (l,r) = (bus.read_byte_raw(0x04000045), bus.read_byte_raw(0x04000044));
             if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
-                let (l, mut r) = (bus.read_byte(0x04000041) as u16, bus.read_byte(0x04000040) as u16);
+                let (l, mut r) = (bus.read_byte_raw(0x04000041) as u16, bus.read_byte_raw(0x04000040) as u16);
                 if l > r {
                     r += 1 << 8;
                 }
@@ -725,15 +725,15 @@ impl PPU {
                     self.set_window_scanline(WindowType::W_0, i as u8 as usize);
                 }
             }
-            self.window_flags[WindowType::W_0 as usize] = bus.read_byte(0x04000048);
+            self.window_flags[WindowType::W_0 as usize] = bus.read_byte_raw(0x04000048);
             //println!("W_0: {:#010b}", self.window_flags[WindowType::W_0 as usize]);
         }
         if self.disp_cnt >> (13 + WindowType::W_1 as u16) & 1 > 0{
             self.window_scanlines[1].iter_mut().for_each(|x| *x = false);
             // set w1
-            let (l,r) = (bus.read_byte(0x04000047), bus.read_byte(0x04000046));
+            let (l,r) = (bus.read_byte_raw(0x04000047), bus.read_byte_raw(0x04000046));
             if (l <= r && self.cur_line >= l && self.cur_line < r) || (l > r && (self.cur_line >= l || self.cur_line < r)){
-                let (l, mut r) = (bus.read_byte(0x04000043) as u16, bus.read_byte(0x04000042) as u16);
+                let (l, mut r) = (bus.read_byte_raw(0x04000043) as u16, bus.read_byte_raw(0x04000042) as u16);
                 if l > r {
                     r += 1 << 8;
                 }
@@ -741,14 +741,14 @@ impl PPU {
                     self.set_window_scanline(WindowType::W_1, i as u8 as usize);
                 }
             }
-            self.window_flags[WindowType::W_1 as usize] = bus.read_byte(0x04000049);
+            self.window_flags[WindowType::W_1 as usize] = bus.read_byte_raw(0x04000049);
             //println!("W_1: {:#010b}", self.window_flags[WindowType::W_1 as usize]);
         }
 
         if self.disp_cnt >> (13 + WindowType::W_obj as u16) & 1 > 0{
             self.window_scanlines[2].iter_mut().for_each(|x| *x = false);
             self.process_sprites(true, bus);
-            self.window_flags[WindowType::W_obj as usize] = bus.read_byte(0x0400004b);
+            self.window_flags[WindowType::W_obj as usize] = bus.read_byte_raw(0x0400004b);
             //println!("W_obj: {:#010b}", self.window_flags[WindowType::W_obj as usize]);
         }
     }
@@ -816,7 +816,7 @@ impl PPU {
         if is_sprite{
             addr += 0x200;
         }
-        let colour = bus.read_halfword(addr as usize);
+        let colour = bus.read_halfword_raw(addr as usize);
         Some(PPU::process_15bit_colour(colour))
     }
 
@@ -832,13 +832,13 @@ impl PPU {
 
         for k in (0..128).rev() {
             // process sprite attributes
-            let attr0 = bus.read_halfword(base_oam_addr + k * 8);
+            let attr0 = bus.read_halfword_raw(base_oam_addr + k * 8);
             let obj_mode = (attr0 >> 8) & 0b11;
             if obj_mode == 0b10 {
                 // no rendering
                 continue;
             }
-            let attr2 = bus.read_halfword(base_oam_addr + k * 8 + 4);
+            let attr2 = bus.read_halfword_raw(base_oam_addr + k * 8 + 4);
             let cur_p = ((attr2 >> 10) & 0b11) as u8;
             if cur_p != self.cur_priority{
                 continue;
@@ -854,7 +854,7 @@ impl PPU {
                 32
             };*/
             
-            let attr1 = bus.read_halfword(base_oam_addr + k * 8 + 2);
+            let attr1 = bus.read_halfword_raw(base_oam_addr + k * 8 + 2);
             let base_tile_index = attr2 & 0b1111111111;
             if self.disp_cnt & 0b111 >= 3 && base_tile_index < 512 {
                 continue; // ignore lower charblock on bitmap modes
@@ -894,16 +894,16 @@ impl PPU {
                     if !density { 
                         let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + (offset_pixels >> 1)) % 32768;
                         if offset_pixels & 1 > 0{
-                            (bus.read_byte(cur_addr) >> 4) + pal_bank
+                            (bus.read_byte_raw(cur_addr) >> 4) + pal_bank
                         }
                         else{
-                            (bus.read_byte(cur_addr) & 0b1111) + pal_bank
+                            (bus.read_byte_raw(cur_addr) & 0b1111) + pal_bank
                         }
                     }
                     // 8 bits per pixel
                     else{
                         let cur_addr = 0x6010000 + (base_tile_index as usize * 32 + offset_pixels) % 32768;
-                        bus.read_byte(cur_addr)
+                        bus.read_byte_raw(cur_addr)
                     };
                     let pixel = self.process_palette_colour(pal, !density, true, bus);
 
@@ -973,10 +973,10 @@ impl PPU {
             else{                
                 let affine_is_double = (attr0 >> 9) > 0;
                 let affine_obj_addr = ((attr1 >> 9) & 0b11111) as usize * 32 + base_oam_addr;
-                let pa = bus.read_halfword(affine_obj_addr + 6);
-                let pb = bus.read_halfword(affine_obj_addr + 14);
-                let pc = bus.read_halfword(affine_obj_addr + 22);
-                let pd = bus.read_halfword(affine_obj_addr + 30);
+                let pa = bus.read_halfword_raw(affine_obj_addr + 6);
+                let pb = bus.read_halfword_raw(affine_obj_addr + 14);
+                let pc = bus.read_halfword_raw(affine_obj_addr + 22);
+                let pd = bus.read_halfword_raw(affine_obj_addr + 30);
 
                 let mut affine_w = w as u16;
                 let mut affine_h = h as u16;

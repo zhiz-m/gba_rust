@@ -2035,8 +2035,8 @@ impl CPU{
     
     fn check_interrupt(&self, bus: &Bus) -> bool {
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_word(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
-        bus.read_halfword(0x04000202) & bus.read_halfword(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
+        bus.read_word_raw(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
+        bus.read_halfword_raw(0x04000202) & bus.read_halfword_raw(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 
     // Mode: SVC (supervisor) for software interrupt
