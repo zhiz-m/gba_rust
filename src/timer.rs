@@ -1,3 +1,5 @@
+use crate::bus::Bus;
+
 pub struct Timer {
     timer_no: usize,
     pub timer_count: u16,
@@ -31,6 +33,46 @@ impl Timer{
             0b10 => 256,
             0b11 => 1024,
             _ => panic!("timer invalid frequency")
+        };
+        //println!("timer: {}, freq: {}", self.timer_no, self.freq);
+    }
+
+    // assumes timer is not enabled yet
+    pub fn set_is_enabled(&mut self, enable: bool) {
+        if enable && !self.is_enabled{
+            self.timer_count = self.reload_val;
+            //println!("timer: {}, reload: {}", self.timer_no, self.reload_val);
         }
+        self.is_enabled = enable;
+    }
+
+    // returns true if overflow happened
+    pub fn clock(&mut self, bus: &mut Bus) -> bool {
+        if !self.is_cascading {
+            self.cur_cycle += 1;
+        }
+
+        if self.cur_cycle >= self.freq {
+            self.cur_cycle = 0;
+            self.timer_count += 1;
+            if self.timer_count == 0 {
+                self.timer_count = self.reload_val;
+                if self.raise_interrupt{
+                    bus.cpu_interrupt(1 << (3 + self.timer_no));
+                }
+                true
+            }
+            else{
+                false
+            }
+        }
+        else{
+            false
+        }
+    }
+
+    pub fn cascade(&mut self) {
+        assert!(self.is_cascading);
+        self.cur_cycle += 1;
     }
 }

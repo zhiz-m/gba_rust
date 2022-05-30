@@ -26,3 +26,17 @@ impl BuildHasher for FastHashBuilder{
         FastHasher{state: 0}
     }
 }
+
+
+pub fn u8_search(data: &[u8], target: &[&[u8]]) -> Option<usize> {
+    // slow brute force. optimise?
+    for (num, str) in target.iter().enumerate() {
+        let target_len = str.len();
+        for i in 0..(data.len() >> 2){
+            if (i<<2) + target_len <= data.len() && data[(i<<2)..(i<<2) + target_len] == **str{
+                return Some(num);
+            }
+        }
+    }
+    None
+}

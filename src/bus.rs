@@ -5,8 +5,12 @@ use std::{
 };
 use crate::{
     dma_channel::DMA_Channel,
-    fast_hasher::FastHashBuilder,
+    algorithm::{
+        FastHashBuilder,
+        self,
+    },
     timer::Timer,
+    config,
 };
 
 const MEM_MAX: usize = 268435456;
@@ -21,13 +25,57 @@ enum MemoryRegion{
     VRAM,
     OAM,
     Cartridge,
+    CartridgeSRAM,
+}
+
+#[derive(Clone, Copy)]
+pub enum CartridgeType{
+    EEPROM,
+    SRAM,
+    FLASH64,
+    FLASH128,
+}
+
+fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
+    let matches = [
+        "SRAM_V".as_bytes(), 
+        "FLASH_V".as_bytes(), 
+        "FLASH512_V".as_bytes(), 
+        "FLASH1M_V".as_bytes(),
+        "EEPROM_V".as_bytes(), 
+    ];
+    let res = algorithm::u8_search(cartridge, &matches);
+    match res {
+        None => config::DEFAULT_CARTRIDGE_TYPE,
+        Some(res) => {
+            match res {
+                0 => CartridgeType::SRAM,
+                1 | 2 => CartridgeType::FLASH64,
+                3 => CartridgeType::FLASH128,
+                4 => CartridgeType::EEPROM,
+                _ => panic!("logical error, invalid result from u8_search"),
+            }
+        }
+    }
 }
 
 pub struct Bus{
     mem: Vec<u8>,
     cpu_halt_request: bool,
     addr_special_handling: HashSet<usize, FastHashBuilder>,
-    
+
+    cartridge_type: CartridgeType,
+
+    // 0-2: cartridge command flags
+    // 3: cartridge page number (for 218kb only, 0 or 1)
+    // 4: cartridge mode 
+    //     val=0 read mode
+    //     val=1 device&manufacturer info mode
+    //     val=2: erase mode
+    //     val=3: write single byte mode
+    //     val=4: select page number mode
+    cartridge_type_state: [u8; 7], 
+
     pub is_any_dma_active: bool,
     pub hblank_dma: bool,
     pub vblank_dma: bool,
@@ -38,11 +86,42 @@ pub struct Bus{
 }
 
 impl Bus {
-    pub fn new(rom_path : String) -> Bus{
+    pub fn new(rom_path : String, cartridge_type_str: Option<String>) -> Bus{
+        let mut mem = vec![0; MEM_MAX];
+
+        // load BIOS
+        let bios_path = env::var("GBA_RUST_BIOS").unwrap();
+        let mut reader = BufReader::new(File::open(bios_path).unwrap());
+        reader.read(&mut mem[0..]).unwrap();
+
+        // load ROM
+        let mut reader = BufReader::new(File::open(rom_path).unwrap());
+        reader.read(&mut mem[0x08000000..]).unwrap();
+
+        let cartridge_type = match cartridge_type_str {
+            None => derive_cartridge_type(&mem[0x08000000..]),
+            Some(cartridge_type_str) => {
+                let cartridge_type_str = cartridge_type_str.trim().to_ascii_uppercase();
+                let trimmed_str = cartridge_type_str.split(" ").nth(0).unwrap();
+                match trimmed_str {
+                    "SRAM" => CartridgeType::SRAM,
+                    "FLASH" => CartridgeType::FLASH64,
+                    "FLASH512" => CartridgeType::FLASH64,
+                    "FLASH1M" => CartridgeType::FLASH128,
+                    "EEPROM" => CartridgeType::FLASH128,
+                    _ => panic!()
+                }
+            }
+        };
+
+        println!("backup type: {}", cartridge_type as u32);
+
         let mut res = Bus { 
-            mem: vec![0; MEM_MAX],
+            mem,
             cpu_halt_request: false,
             addr_special_handling: HashSet::with_hasher(FastHashBuilder),
+            cartridge_type,
+            cartridge_type_state: [0; 7],
             
             is_any_dma_active: false,
             hblank_dma: false,
@@ -72,15 +151,7 @@ impl Bus {
         res.addr_special_handling.insert(0x040000d3); // + 12
         res.addr_special_handling.insert(0x040000df); // + 12
 
-        // load BIOS
         
-        let bios_path = env::var("GBA_RUST_BIOS").unwrap();
-        let mut reader = BufReader::new(File::open(bios_path).unwrap());
-        reader.read(&mut res.mem[0..]).unwrap();
-
-        // load ROM
-        let mut reader = BufReader::new(File::open(rom_path).unwrap());
-        reader.read(&mut res.mem[0x08000000..]).unwrap();
 
         res
     }
@@ -189,32 +260,44 @@ impl Bus {
         }
     }
 
-    /*#[inline(always)]
-    pub fn check_cpu_interrupt(&mut self) -> u16 {
-        let res = self.cpu_interrupt;
-        self.cpu_interrupt = 0;
-        res
-    }*/
-
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
         let reg_if = self.read_halfword(0x04000202);
         let cur_reg_if = interrupt & self.read_halfword(0x04000200);
         self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
     }
 
-    // -------- miscellaneous methods to provide bulk read access. Intended for PPU only with no special functions. 
-    //pub fn bulk_read_byte(&self, addr: usize, num: usize) -> &[u8] {
-    //    &self.mem[addr .. addr+num]
-    //}
+    pub fn timer_clock(&mut self) {
+        if !self.is_any_timer_active{
+            return;
+        }
+        //println!("timer clock");
+        unsafe{
+            for i in 0..4 {
+                let ptr = &mut self.timers[i] as *mut Timer;
+                if (*ptr).is_enabled && (*ptr).clock(self) && i != 3 && self.timers[i+1].is_cascading{
+                    let ptr = &mut self.timers[i+1] as *mut Timer;
+                    (*ptr).cascade();
+                }
+            }
+        }
+    }
 
     // -------- helper functions
-    
     pub fn set_is_any_dma_active(&mut self) {
         self.is_any_dma_active = false;
         for i in 0..4{
             if self.dma_channels[i].is_enabled{
                 self.is_any_dma_active = true;
-                //println!("dma enabled");
+                return;
+            }
+        }
+    }
+
+    pub fn set_is_any_timer_active(&mut self) {
+        self.is_any_timer_active = false;
+        for i in 0..4{
+            if self.timers[i].is_enabled{
+                self.is_any_timer_active = true;
                 return;
             }
         }
@@ -240,6 +323,15 @@ impl Bus {
                     self.mem[addr]
                 }
             }
+            MemoryRegion::CartridgeSRAM => {
+                //println!("read from SRAM, addr: {:#x}, val: {:#x}", addr, self.mem[addr]);
+                match self.cartridge_type {
+                    CartridgeType::SRAM => self.mem[addr],
+                    CartridgeType::FLASH64 | CartridgeType::FLASH128 => self.internal_read_byte_flash(addr),
+                    _ => panic!("writing to SRAM is forbidden for cartridge type {}", self.cartridge_type as u32)
+                }
+                
+            },
             _ => self.mem[addr]
         }
     }
@@ -268,6 +360,8 @@ impl Bus {
                             self.mem[addr] ^= val;
                             return;
                         },
+
+                        // special handling for DMA
                         0x040000bb | 0x040000c7 | 0x040000d3 | 0x040000df => {
                             self.mem[addr] = val;
                             let channel_no = (addr - 0x040000bb) / 12;
@@ -282,6 +376,8 @@ impl Bus {
                             //println!("set dma flags");
                             return;
                         },
+
+                        // special handling for writing to timer count
                         0x4000100 | 0x4000101 | 0x4000104 | 0x4000105 | 
                         0x4000108 | 0x4000109 | 0x400010c | 0x400010d => {
                             let timer_no = (addr - 0x4000100) >> 2;
@@ -297,12 +393,20 @@ impl Bus {
                                 }
                             }
                         },
+
+                        // special handling for timer control
                         0x4000102 | 0x4000106 | 0x400010a | 0x400010e => {
                             let timer_no = (addr - 0x4000102) >> 2;
                             unsafe{
                                 let ptr = &mut self.timers[timer_no] as *mut Timer;
                                 (*ptr).set_frequency(val & 0b11);
-                                // TODO
+                                (*ptr).is_cascading = (val >> 2) & 1 > 0;
+                                (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
+                                (*ptr).set_is_enabled((val >> 7) & 1 > 0);
+                                self.set_is_any_timer_active();
+                                //if (*ptr).is_enabled {
+                                //    println!("timer {} enabled", timer_no);
+                                //}
                             }
                         },
                         _ => {},
@@ -313,10 +417,140 @@ impl Bus {
             MemoryRegion::BIOS => {
                 // do nothing, writing to BIOS is illegal
             },
+            MemoryRegion::CartridgeSRAM => {
+                //println!("write to SRAM, addr: {:#x}, val: {:#x}", addr, val);
+                match self.cartridge_type {
+                    CartridgeType::FLASH64 | CartridgeType::FLASH128 => {
+                        self.internal_write_byte_flash(addr, val);
+                    },
+                    _ => {},
+                }
+                self.cartridge_type_state[0] = val;
+            },
             _ => {
                 self.mem[addr] = val;
             }
         };
+    }
+
+    fn internal_read_byte_flash(&self, addr: usize) -> u8 {
+        match self.cartridge_type_state[4] {
+            0 => {
+                match self.cartridge_type{
+                    CartridgeType::FLASH64 => {
+                        self.mem[config::FLASH64_MEM_START + (addr & 0xffff)]
+                    },
+                    CartridgeType::FLASH128 => {
+                        self.mem[config::FLASH128_MEM_START + (addr & 0xffff) + ((self.cartridge_type_state[3] as usize) << 16)]
+                    },
+                    _ => panic!("cartridge type is not flash")
+                }
+            },
+            1 => {
+                let (device, man) = 
+                match self.cartridge_type{
+                    CartridgeType::FLASH64 => {
+                        (0x1c, 0xc2) // Macronix 64kb
+                    },
+                    CartridgeType::FLASH128 => {
+                        (0x09, 0xc2) // Macronix 128kb
+                    },
+                    _ => panic!("cartridge type is not flash")
+                };
+                match addr {
+                    0xe000000 => man,
+                    0xe000001 => device,
+                    _ => panic!("invalid addr for read in device/manufacturer mode"),
+                }
+            },
+            _ => panic!("invalid cartridge type state for read: {}", self.cartridge_type_state[4])
+        }
+    }
+
+    fn internal_write_byte_flash(&mut self, addr: usize, val: u8) {
+        if addr == 0x0e005555 {
+            if self.cartridge_type_state[0] == 0{
+                self.cartridge_type_state[0] = val;
+            }
+            else if self.cartridge_type_state[1] != 0{
+                self.cartridge_type_state[2] = val;
+                self.execute_flash_storage_command();
+            }
+        }
+        else if addr == 0x0e002aaa {
+            self.cartridge_type_state[1] = val;
+        }
+        else {
+            match self.cartridge_type_state[4]{
+                2 => {
+                    if addr & 0xfff == 0 && self.cartridge_type_state[0] != 0 && self.cartridge_type_state[1] != 0 {
+                        // special: erase entire sector
+                        let addr = addr & (!0xfff);
+                        for i in addr..addr+0x1000{
+                            self.mem[i] = 0xff;
+                        }
+                        self.cartridge_type_state[0] = 0;
+                        self.cartridge_type_state[1] = 0;
+                        self.cartridge_type_state[2] = 0;
+                        self.cartridge_type_state[4] = 0;
+                    }
+                }
+                // write single byte
+                3 => {
+                    
+                    self.cartridge_type_state[4] = 0;
+                },
+                // bank switching
+                4 => {
+                    if addr == 0x0e000000{
+                        assert!(val <= 1 );
+                        self.cartridge_type_state[3] = val;
+                        self.cartridge_type_state[4] = 0;
+                    }
+                }
+                _ => panic!("invalid cartridge type state for write: {}", self.cartridge_type_state[4])
+            }
+        }
+    }
+
+    fn execute_flash_storage_command(&mut self) {
+        match self.cartridge_type_state[2] {
+            0x90 => {
+                self.cartridge_type_state[4] = 1;
+            },
+            0xf0 => {
+                if self.cartridge_type_state[4] == 1{
+                    self.cartridge_type_state[4] = 0;
+                }
+            },
+            0x80 => {
+                self.cartridge_type_state[4] = 2;
+            },
+            0x10 => {
+                if self.cartridge_type_state[4] == 1 {
+                    let (start, end) = 
+                    match self.cartridge_type{
+                        CartridgeType::FLASH64 => (config::FLASH64_MEM_START, config::FLASH64_MEM_END),
+                        CartridgeType::FLASH128 => (config::FLASH128_MEM_START, config::FLASH128_MEM_END),
+                        _ => panic!("logical error: execute_flash_storage_command is caled, but cartridge type is not FLASH64 or FLASH128"),
+                    };
+                    for i in start..end {
+                        self.mem[i] = 0xff;
+                    }
+                }
+                self.cartridge_type_state[4] = 0;
+            },
+            0xa0 => {
+                self.cartridge_type_state[4] = 3;
+            },
+            0xb0 => {
+                self.cartridge_type_state[4] = 4;
+            },
+            _ => {}
+        }
+        self.cartridge_type_state[0] = 0;
+        self.cartridge_type_state[1] = 0;
+        self.cartridge_type_state[2] = 0;
     }
 
     fn addr_match(addr: usize) -> (usize, MemoryRegion) {
@@ -345,13 +579,21 @@ impl Bus {
             },
             6 => {
                 // NOTE: not mirrored (maybe todo)
-                (addr, MemoryRegion::VRAM)
+                let mut m = addr & 0x1ffff;
+                if m >= 98304{
+                    m -= 32768;
+                }
+                (0x06000000 + m, MemoryRegion::VRAM)
             },
             7 => {
                 (0x07000000 + (addr & 0x3ff), MemoryRegion::OAM)
             },
-            8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 => {
-                (addr, MemoryRegion::Cartridge)
+            8 | 9 | 10 | 11 | 12 | 13 => {
+                //(addr, MemoryRegion::Cartridge)
+                (0x08000000 + (addr & 0x1ffffff), MemoryRegion::Cartridge)
+            }
+            14 | 15 => {
+                (0x0e000000 + (addr & 0xffff), MemoryRegion::CartridgeSRAM)
             }
             _ => panic!("illegal memory access: > 0x10000000: {:#x}", addr),
         }

@@ -50,7 +50,7 @@ impl DMA_Channel {
         }
     }
 
-    pub fn new_enabled(channel_no: usize, bus: &Bus) -> DMA_Channel {
+    pub fn new_enabled(channel_no: usize, bus: &mut Bus) -> DMA_Channel {
         let src_addr = bus.read_word(0x040000b0 + 12 * channel_no) as usize;
         let dest_addr = bus.read_word(0x040000b4 + 12 * channel_no) as usize;
         let dma_cnt = bus.read_word(0x040000b8 + 12 * channel_no);
@@ -60,11 +60,18 @@ impl DMA_Channel {
             0b01 => TimingMode::VBlank,
             0b10 => TimingMode::HBlank,
             0b11 => {
+                // turn dma channel off
                 is_enabled = false;
+                let mut dma_cnt_upper = bus.read_byte_raw(0x040000bb + 12 * channel_no);
+                dma_cnt_upper &= !(1 << 7);
+                bus.store_byte_raw(0x040000bb + 12 * channel_no, dma_cnt_upper);
                 TimingMode::FIFO
             },
             _ => panic!(),
         };
+        if timing_mode != TimingMode::FIFO{
+            //println!("dma channel {}, src_addr: {:#x}, dest addr: {:#x}, num_transfers: {:#x}", channel_no, src_addr, dest_addr, dma_cnt as u16);
+        }
         //assert!(!is_enabled || dma_cnt as u16 > 0);
         DMA_Channel{
             channel_no,
@@ -165,7 +172,7 @@ impl DMA_Channel {
         if !self.is_repeating {
             self.is_enabled = false;
             let mut dma_cnt_upper = bus.read_byte_raw(0x040000bb + 12 * self.channel_no);
-            dma_cnt_upper |= !(1 << 7);
+            dma_cnt_upper &= !(1 << 7);
             bus.store_byte_raw(0x040000bb + 12 * self.channel_no, dma_cnt_upper);
         }
         if self.raise_interrupt {

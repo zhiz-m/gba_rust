@@ -1,4 +1,6 @@
 
+use crate::bus::CartridgeType;
+
 // number of clocks to execute for each call to sys::time::SystemTime::now(). 
 #[cfg(not(feature="no_limit_cps"))]
 pub const CPU_EXECUTION_INTERVAL_CLOCKS: u64 = 16 * 1024; 
@@ -7,3 +9,12 @@ pub const CPU_EXECUTION_INTERVAL_CLOCKS: u64 = 16 * 1024;
 #[cfg(not(feature="no_limit_cps"))]
 pub const CPU_EXECUTION_INTERVAL_NS: u64 = 1000000000 / ( 16 * 1024 * 1024 / CPU_EXECUTION_INTERVAL_CLOCKS);
 
+pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::SRAM;
+
+// note: the below memory addresses cannot be accessed by the user. 
+
+pub const FLASH64_MEM_START: usize = 0x0e010000;
+pub const FLASH64_MEM_END: usize = 0x0e020000;
+
+pub const FLASH128_MEM_START: usize = 0x0e010000;
+pub const FLASH128_MEM_END: usize = 0x0e030000;

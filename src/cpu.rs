@@ -2042,6 +2042,7 @@ impl CPU{
     // Mode: SVC (supervisor) for software interrupt
     //       IRQ (interrupt) for hardware interrupt
     fn execute_hardware_interrupt(&mut self) -> u32 {
+        //println!("hardware interrupt");
         self.reg[Register::R14_irq as usize] = self.actual_pc + 4;
         let mut cpsr = self.reg[Register::CPSR as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;

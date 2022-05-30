@@ -5,7 +5,7 @@ mod frontend;
 mod config;
 mod input_handler;
 mod dma_channel;
-mod fast_hasher;
+mod algorithm;
 mod timer;
 
 use bus::Bus;
@@ -35,9 +35,9 @@ struct GBA {
 }
 
 impl GBA {
-    pub fn new(rom_path: String, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> GBA {
+    pub fn new(rom_path: String, cartridge_type_str: Option<String>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> GBA {
         let res = GBA { 
-            bus: Bus::new(rom_path), 
+            bus: Bus::new(rom_path, cartridge_type_str), 
             cpu: CPU::new(), 
             ppu: PPU::new(), 
             input_handler: InputHandler::new(),
@@ -75,22 +75,10 @@ impl GBA {
                 {
                     self.cpu.debug_cnt += 200;
                 }
-                
             }
-            //#[cfg(feature="debug_instr")]
-            //if clock > 77350000
-            //{
-            //    self.cpu.debug_cnt = 10000000;
-            //}
 
-            //self.cpu.set_interrupt(self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt());
-            // interrupts
-            //let interrupt = self.bus.check_cpu_interrupt() | self.ppu.check_cpu_interrupt();
-            //if interrupt > 0 {
-            //    let reg_if = self.bus.read_halfword(0x04000202);
-            //    let cur_reg_if = interrupt & self.bus.read_halfword(0x04000200);
-            //    self.bus.store_halfword(0x04000202, cur_reg_if & !(reg_if));
-            //}
+            // timer clock
+            self.bus.timer_clock();
 
             // cpu clock
             self.cpu.clock(&mut self.bus);
@@ -121,12 +109,13 @@ impl GBA {
 
 fn main() {
     let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
+    let cartridge_type_str = env::args().nth(2);
 
     let (tx, rx) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
 
 
-    let mut gba = GBA::new(rom_path, tx, rx2);
+    let mut gba = GBA::new(rom_path, cartridge_type_str, tx, rx2);
     let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2);
 
     thread::spawn(move || {
