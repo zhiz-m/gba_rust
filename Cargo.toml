@@ -10,6 +10,8 @@ piston = "0.53.0"
 piston2d-graphics = "0.41.0"
 pistoncore-glutin_window = "0.69.0"
 piston2d-opengl_graphics = "0.79.0"
+cpal = "0.13.5"
+rubato = "0.12.0"
 
 [features]
 debug_instr = []

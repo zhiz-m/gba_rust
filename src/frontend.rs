@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use cpal::Device;
+use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
 use glutin_window::GlutinWindow as Window;
 use graphics::{clear, Transformed, rectangle};
 use opengl_graphics::{GlGraphics, OpenGL};
@@ -28,12 +31,14 @@ pub struct Frontend{
     last_screenbuf: ScreenBuffer,
 
     key_map: HashMap<Key, KeyInput>,
-    key_sender: Sender<(KeyInput, bool)>
+    key_sender: Sender<(KeyInput, bool)>,
 
+    audio_output_device: Device,
+    audio_receiver: Option<Receiver<(f32, f32)>>,
 }
 
 impl Frontend{
-    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>) -> Frontend{
+    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>, audio_receiver: Receiver<(f32, f32)>) -> Frontend{
         Frontend { 
             gl: None,
             window: None,
@@ -56,7 +61,15 @@ impl Frontend{
                 (Key::Left, KeyInput::Left),
             ]),
             key_sender,
+
+            audio_output_device: cpal::default_host().default_output_device().unwrap(),
+            audio_receiver: Some(audio_receiver),
         }
+    }
+
+    pub fn get_sample_rate(&self) -> usize {
+        let config = self.audio_output_device.default_output_config().unwrap();
+        config.sample_rate().0 as usize
     }
     
     pub fn start(&mut self) -> Result<(), &'static str>{
@@ -67,6 +80,35 @@ impl Frontend{
             .unwrap());
         self.gl = Some(GlGraphics::new(OpenGL::V3_2));
         self.events = Some(Events::new(EventSettings::new()));
+
+        let config = self.audio_output_device.default_output_config().unwrap().into();
+        let receiver = self.audio_receiver.take().unwrap();
+        //let mut t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let stream = self.audio_output_device.build_output_stream(&config, 
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let channel_num = config.channels as usize;
+                //println!("data len: {}, channel num: {}", data.len(), channel_num);
+                //let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                //let since = now.checked_sub(t).unwrap().as_nanos();
+                //t = now;
+                //println!("nanos since: {}", since);
+                for frame in data.chunks_mut(channel_num){
+                    match receiver.recv(){
+                        Ok(stereo_data) => {
+                            for stereo_frame in frame.chunks_mut(2){
+                                stereo_frame[0] = stereo_data.0;
+                                stereo_frame[1] = stereo_data.1;
+                            }
+                        }
+                        Err(why) => println!("audio stream err: {}", why.to_string()),
+                    }
+                }
+            },
+         move |err| {
+            println!("err: {}", err.to_string())
+        }).unwrap();
+
+        stream.play().unwrap();
 
         while self.render().unwrap() {
 

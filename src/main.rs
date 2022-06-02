@@ -7,6 +7,7 @@ mod input_handler;
 mod dma_channel;
 mod algorithm;
 mod timer;
+mod apu;
 
 use bus::Bus;
 use cpu::CPU;
@@ -14,6 +15,7 @@ use input_handler::KeyInput;
 use ppu::{
     PPU, ScreenBuffer
 };
+use apu::APU;
 use frontend::{
     Frontend
 };
@@ -35,9 +37,10 @@ struct GBA {
 }
 
 impl GBA {
-    pub fn new(rom_path: String, cartridge_type_str: Option<String>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>) -> GBA {
+    pub fn new(rom_path: String, cartridge_type_str: Option<String>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>, audio_sender: Sender<(f32, f32)>, audio_sample_rate: usize) -> GBA {
+        let apu = APU::new(audio_sample_rate, audio_sender);
         let res = GBA { 
-            bus: Bus::new(rom_path, cartridge_type_str), 
+            bus: Bus::new(rom_path, cartridge_type_str, apu), 
             cpu: CPU::new(), 
             ppu: PPU::new(), 
             input_handler: InputHandler::new(),
@@ -60,7 +63,7 @@ impl GBA {
         #[cfg(feature="print_cps")]
         let mut last_clock_print_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         loop {
-            if clock % (16 * 1024 * 1024) == 0{
+            if clock & (16 * 1024 * 1024 - 1) == 0{
                 #[cfg(feature="print_cps")]
                 {
                     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -77,6 +80,11 @@ impl GBA {
                 }
             }
 
+            // apu clock
+            if clock & 0b111111111 == 0{
+                self.bus.apu_clock();
+            }
+            
             // timer clock
             self.bus.timer_clock();
 
@@ -113,10 +121,12 @@ fn main() {
 
     let (tx, rx) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
+    
+    // audio
+    let (tx3, rx3) = mpsc::channel();
 
-
-    let mut gba = GBA::new(rom_path, cartridge_type_str, tx, rx2);
-    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2);
+    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2, rx3);
+    let mut gba = GBA::new(rom_path, cartridge_type_str, tx, rx2, tx3, frontend.get_sample_rate());
 
     thread::spawn(move || {
         gba.start().unwrap();

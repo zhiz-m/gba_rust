@@ -1,12 +1,6 @@
 #![allow(non_camel_case_types)]
 
-use crate::bus::Bus;
-
-#[derive(Clone, Copy)]
-pub enum ChunkSize{
-    Word = 4,
-    Halfword = 2,
-}
+use crate::bus::{Bus, ChunkSize};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum TimingMode{
@@ -163,6 +157,7 @@ impl DMA_Channel {
             match self.chunk_size{
                 ChunkSize::Halfword => bus.store_halfword(self.dest_addr, bus.read_halfword(self.src_addr)),
                 ChunkSize::Word => bus.store_word(self.dest_addr, bus.read_word(self.src_addr)),
+                _ => panic!("DMA chunk size must be Word or Halfword")
             };
             self.src_addr += self.src_increment * self.chunk_size as usize;
             self.dest_addr += self.dest_increment * self.chunk_size as usize;

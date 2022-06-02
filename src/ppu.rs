@@ -581,8 +581,8 @@ impl PPU {
             let pc = bus.read_halfword_raw(affine_obj_addr + 22);
             let pd = bus.read_halfword_raw(affine_obj_addr + 30);
 
-            let y_flip = (attr1 >> 12) & 1 > 0;
-            let x_flip = (attr1 >> 13) & 1 > 0;
+            let y_flip = (attr1 >> 13) & 1 > 0;
+            let x_flip = (attr1 >> 12) & 1 > 0;
 
             // width, height in pixels
             let (w, h) = self.get_sprite_dimensions((attr0 >> 14) as u8, (attr1 >> 14) as u8);
