@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpal::Device;
 use cpal::traits::{HostTrait, DeviceTrait, StreamTrait};
@@ -39,6 +38,14 @@ pub struct Frontend{
 
 impl Frontend{
     pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>, audio_receiver: Receiver<(f32, f32)>) -> Frontend{
+        let audio_output_device = cpal::default_host().devices().unwrap().map(|x| {
+            if x.default_output_config().ok()?.channels() == 2{
+                Some(x)
+            }
+            else{
+                None
+            }
+        }).find(|x| x.is_some()).expect("no suitable stereo output device").unwrap();
         Frontend { 
             gl: None,
             window: None,
@@ -62,7 +69,7 @@ impl Frontend{
             ]),
             key_sender,
 
-            audio_output_device: cpal::default_host().default_output_device().unwrap(),
+            audio_output_device,
             audio_receiver: Some(audio_receiver),
         }
     }

@@ -170,45 +170,28 @@ impl Bus {
     // -------- public memory read/write interfaces, intended for user instructions. 
 
     pub fn read_byte(&self, addr: usize) -> u8 {
-        
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, true);
         self.internal_read_byte(addr, region)
     }
 
     pub fn read_halfword(&self, addr: usize) -> u16 {
-        //if addr >= MEM_MAX {
-        //    println!("----- bus.read_halfword: out of bounds addr {:#x}", addr);
-        //    return 0;
-        //}
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
         assert!(addr & 1 == 0);
         self.internal_read_byte(addr, region) as u16 + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
     }
 
     pub fn read_word(&self, addr: usize) -> u32 {
-        //if addr >= MEM_MAX {
-        //    println!("----- bus.read_word: out of bounds addr {:#x}", addr);
-        //    return 0;
-        //}
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
         assert!(addr & 0b11 == 0);
         self.internal_read_byte(addr, region) as u32 + ((self.internal_read_byte(addr+1, region) as u32) << 8) + ((self.internal_read_byte(addr+2, region) as u32) << 16) + ((self.internal_read_byte(addr+3, region) as u32) << 24)
     }
 
     pub fn store_byte(&mut self, addr: usize, val: u8) {
-        //if addr >= MEM_MAX {
-        //    println!("----- bus.store_byte: out of bounds addr {:#x}", addr);
-        //    return;
-        //}
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, false);
         self.internal_write_byte(addr, region, val);
     }
 
     pub fn store_halfword(&mut self, addr: usize, val: u16) {
-        //if addr >= MEM_MAX {
-        //    println!("----- bus.store_halfword: out of bounds addr {:#x}", addr);
-        //    return;
-        //}
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, false);
         assert!(addr & 1 == 0);
         self.internal_write_byte(addr, region, (val & 0b11111111) as u8);
@@ -216,10 +199,6 @@ impl Bus {
     }
 
     pub fn store_word(&mut self, addr: usize, val: u32) {
-        //if addr >= MEM_MAX {
-        //    println!("----- bus.store_word: out of bounds addr {:#x}", addr);
-        //    return;
-        //}
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, false);
         assert!(addr & 0b11 == 0);
         self.internal_write_byte(addr, region, (val & 0b11111111) as u8);
@@ -434,6 +413,7 @@ impl Bus {
 
                         // special handling for square sound channels; reset
                         0x4000065 | 0x400006d => {
+                            self.mem[addr] = val;
                             let square_chan_num = match addr {
                                 0x4000065 => 0,
                                 0x400006d => 1,
@@ -445,6 +425,7 @@ impl Bus {
                                     (*ptr).reset_square_channel(square_chan_num, self);
                                 };
                             }
+                            return;
                         }
 
                         // special handling for enabling sound channels 0 - 3

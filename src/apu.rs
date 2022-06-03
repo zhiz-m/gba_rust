@@ -1,8 +1,8 @@
 
-use std::{sync::mpsc::Sender, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{sync::mpsc::Sender};
 
 use crate::bus::Bus;
-use rubato::{SincFixedIn, Resampler, InterpolationParameters, InterpolationType, FftFixedInOut};
+use rubato::{Resampler, FftFixedInOut};
 
 // StereoTuple.0 is right, StereoTuple.1 is left
 struct StereoTuple(Option<i16>, Option<i16>);
@@ -129,7 +129,6 @@ impl APU {
                 if !enable_right_left[0] && !enable_right_left[1] {
                     continue;
                 }
-                //println!("process channels");
                 let snd_cur_freq = bus.read_halfword(0x04000064 + 8 * i);
 
                 if (snd_cur_freq >> 0xe) & 1 > 0 && self.square_length[i] == 0 {
@@ -199,13 +198,10 @@ impl APU {
                         _ => unreachable!(),
                     } as i16;
                     if self.square_sweep_cnt[i] % period_clocks < active_clocks {
-                        //println!("add right");
                         cur_tuple.add(j, final_square_vol);
                     }
                     else{
-                        //println!("add left");
                         cur_tuple.add(j, -final_square_vol);
-                        //cur_tuple.add(j, 0);
                     }
                 }
 
@@ -219,63 +215,46 @@ impl APU {
             cur_tuple.multiply(0, snd_dmg_cnt as i16 & 0b111);
             cur_tuple.multiply(1, (snd_dmg_cnt >> 4) as i16 & 0b111);
 
-            // push onto buffer
-            /*let prev = if self.sound_buff[0].len() == 0 {
-                [0f32; 2]
-            }
-            else {
-                [*self.sound_buff[0].last().unwrap(), *self.sound_buff[1].last().unwrap()]
-            };*/
-        }
-        // process bias
-        let snd_bias = bus.read_word_raw(0x04000088);
-        let bias = (snd_bias >> 0) & 0b1111111111;
-        cur_tuple.add_bias(0, bias as i16);
-        cur_tuple.add_bias(1, bias as i16);
-        //println!("bias: {}", bias);
+            // process bias
+            let snd_bias = bus.read_word_raw(0x04000088);
+            let bias = (snd_bias >> 0) & 0b1111111111;
+            cur_tuple.add_bias(0, bias as i16);
+            cur_tuple.add_bias(1, bias as i16);
 
-        // clip values into range [0, 0x3ff]
-        cur_tuple.clip();
+            // clip values into range [0, 0x3ff]
+            cur_tuple.clip();
+        }
 
         self.sound_in_buff[0].push(match cur_tuple.0 {
             None => 0f32,
-            Some(val) => (val - 512) as f32 / 512f32,
+            Some(val) => (val as f32 - 512.) / 512.,
         });
         self.sound_in_buff[1].push(match cur_tuple.1 {
             None => 0f32,
-            Some(val) => (val - 512) as f32 / 512f32,
+            Some(val) => (val as f32 - 512.)  / 512.,
         });
-        if *self.sound_in_buff[0].last().unwrap() != 0f32 {
-            //println!("sound is playing");
-        }
+
         if self.sound_in_buff[0].len() == self.sampler.input_frames_next() {
-            //println!("num frames: {}", self.sampler.input_frames_next());
             self.sampler.process_into_buffer(&self.sound_in_buff, &mut self.sound_out_buff, None).unwrap();
-            //println!("sound out buf len: {}", self.sound_out_buff[0].len());
             for j in 0..self.sound_out_buff[0].len(){
-                //println!("audio data: {:.5} {:.5}", self.sound_out_buff[0][j], self.sound_out_buff[1][j]);
                 self.audio_sender.send((self.sound_out_buff[0][j], self.sound_out_buff[1][j])).unwrap();
             }
-            //println!("out buff size: {} {}", self.sound_out_buff.len(), self.sound_out_buff[0].len());
             self.sound_in_buff[0].clear();
             self.sound_in_buff[1].clear();
-            //let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            //let since = now.checked_sub(self.t).unwrap().as_nanos();
-            //self.t = now;
-            //println!("nanos since, in apu: {}", since);
+            self.sound_out_buff[0].clear();
+            self.sound_out_buff[1].clear();
         }
     }
 
     // reset envelope, rate and length
     // channel num must be 0 or 1
     pub fn reset_square_channel(&mut self, channel_num: usize, bus: &Bus) {
-        //println!("channel reset");
         let snd_cur_cnt = bus.read_halfword(0x04000062 + channel_num * 6);
         let snd_cur_freq = bus.read_halfword(0x04000064 + channel_num * 8);
         self.square_envelope[channel_num] = snd_cur_cnt as u32 >> 0xc;
         self.square_length[channel_num] = snd_cur_cnt as u32 & 0b111111;
         self.square_rate[channel_num] = snd_cur_freq as u32 & 0b11111111111;
-        self.square_sweep_cnt[channel_num] = 512;
-        self.square_envelope_cnt[channel_num] = 512;
+        self.square_sweep_cnt[channel_num] = 0;
+        self.square_envelope_cnt[channel_num] = 0;
     }
 }
