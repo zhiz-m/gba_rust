@@ -79,11 +79,6 @@ impl GBA {
                     self.cpu.debug_cnt += 200;
                 }
             }
-
-            // apu clock
-            if clock & 0b111111111 == 0{
-                self.bus.apu_clock();
-            }
             
             // timer clock
             self.bus.timer_clock();
@@ -91,6 +86,12 @@ impl GBA {
             // cpu clock
             self.cpu.clock(&mut self.bus);
             
+            // apu clock. clock after CPU so that DMA requests are handled before sound. 
+            // (so Direct Sound gets a fresh sound sample)
+            if clock & (config::AUDIO_SAMPLE_CLOCKS as u64-1) == 0{
+                self.bus.apu_clock();
+            }
+
             // ppu clock and check if frame has completed.
             if let Some(buff) = self.ppu.clock(&mut self.bus){
                 if let Err(why) = self.screenbuf_sender.send(buff){

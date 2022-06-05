@@ -93,7 +93,7 @@ pub struct Bus{
     pub is_any_timer_active: bool,
     timers: [Timer; 4],
 
-    apu: APU,
+    pub apu: APU,
 }
 
 impl Bus {
@@ -260,7 +260,6 @@ impl Bus {
         if !self.is_any_timer_active{
             return;
         }
-        //println!("timer clock");
         unsafe{
             for i in 0..4 {
                 let ptr = &mut self.timers[i] as *mut Timer;
@@ -276,7 +275,7 @@ impl Bus {
     pub fn apu_clock(&mut self) {
         let ptr = &mut self.apu as *mut APU;
         unsafe {
-            (*ptr).clock_512(self);
+            (*ptr).clock(self);
         }
     }
 
@@ -366,6 +365,7 @@ impl Bus {
                         0x040000bb | 0x040000c7 | 0x040000d3 | 0x040000df => {
                             self.mem[addr] = val;
                             let channel_no = (addr - 0x040000bb) / 12;
+                            //println!("addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                             let dma_channel = if val >> 7 > 0{
                                 DMA_Channel::new_enabled(channel_no, self)
                             }
@@ -439,6 +439,40 @@ impl Bus {
                                 }
                             }
                         }*/
+
+                        // special handling for direct sound channels; reset
+                        0x4000083 => {
+                            for i in 0..2 {
+                                if (val >> (3 + 4*i)) & 1 == 0{
+                                    continue;
+                                }
+                                let enable_right_left = [(val >> (4 * i)) & 1 > 0, (val >> (1 + 4 * i)) & 1 > 0];
+                                if !enable_right_left[0] && !enable_right_left[1] {
+                                    self.apu.direct_sound_timer[i] = None;
+                                }
+                                else{
+                                    self.apu.direct_sound_timer[i] = Some((val as usize >> (2 + i * 4)) & 1);
+                                }
+                                println!("clear fifo: {}", i);
+                                self.apu.direct_sound_fifo[i].clear();
+                            }
+                        }
+
+                        // special handling for direct sound FIFO insertions
+                        0x040000a0 | 0x040000a1 | 0x040000a2 | 0x040000a3 |
+                        0x040000a4 | 0x040000a5 | 0x040000a6 | 0x040000a7 => {
+                            let channel_num = (addr - 0x040000a0) >> 2;
+                            if self.apu.direct_sound_fifo[channel_num].len() < 32 {
+                                self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
+                            }
+                            else{
+                                //self.apu.direct_sound_fifo[channel_num].pop_back();
+                                //self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
+                                println!("sound fifo: {}, attempt to add sample at 32 capacity", channel_num);
+                            }
+                            // do not write to mem directly
+                            return;
+                        }
                         _ => {},
                     }
                 }
@@ -650,7 +684,6 @@ impl Bus {
                         return (0, MemoryRegion::Illegal)
                     }
                 }
-                // NOTE: not mirrored (maybe todo)
                 let mut m = addr & 0x1ffff;
                 if m >= 98304{
                     m -= 32768;
@@ -698,4 +731,24 @@ impl Bus {
             },
         }
     }
+
+    /*fn update_direct_sound_timer_num(&mut self) {
+        let snd_stat = self.read_byte_raw(0x04000084);
+        if (snd_stat >> 7) & 1 == 0{
+            self.timers[0].set_direct_sound_channel(None);
+            self.timers[1].set_direct_sound_channel(None);
+        }
+        else{
+            let snd_ds_cnt = self.read_halfword_raw(0x04000082);
+            for i in 0..2 {
+                let enable_right_left = [(snd_ds_cnt >> (8 + 4 * i)) & 1 > 0, (snd_ds_cnt >> (9 + 4 * i)) & 1 > 0];
+                if !enable_right_left[0] && !enable_right_left[1] {
+                    self.timers[i].set_direct_sound_channel(None);
+                }
+                else{
+                    self.timers[i].set_direct_sound_channel(Some((snd_ds_cnt as usize >> (10 + i * 4)) & 1));
+                }
+            }
+        }
+    }*/
 }

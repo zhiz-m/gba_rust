@@ -1,7 +1,10 @@
 
-use std::{sync::mpsc::Sender};
+use std::{sync::mpsc::Sender, collections::VecDeque};
 
-use crate::bus::Bus;
+use crate::{
+    bus::Bus,
+    config
+};
 use rubato::{Resampler, FftFixedInOut};
 
 // StereoTuple.0 is right, StereoTuple.1 is left
@@ -62,14 +65,21 @@ impl StereoTuple {
 }
 
 pub struct APU {
+    //  ------- square sound channels
     square_length: [u32; 2],
     square_rate: [u32; 2],
     square_envelope: [u32; 2],
 
-    square_sweep_cnt: [u32; 2], // only sound chan 1 uses this for freq changes
+    // counts number of clock cycles
+    square_sweep_cnt: [u32; 2], 
     square_envelope_cnt: [u32; 2],
 
     pub square_disable: [bool; 2],
+
+    // -------- direct sound (DMA) channels
+    pub direct_sound_fifo: Vec<VecDeque<i8>>,
+    pub direct_sound_fifo_cur: [i8; 2],
+    pub direct_sound_timer: [Option<usize>; 2],
 
     sound_in_buff: Vec<Vec<f32>>,
     sound_out_buff: Vec<Vec<f32>>,
@@ -90,7 +100,8 @@ impl APU {
         };
         let sampler = SincFixedIn::new(sample_rate_output as f64 / 32768f64, sample_rate_output as f64 / 32768f64, params, 1024, 2).unwrap();
         */
-        let sampler = FftFixedInOut::new(32768, sample_rate_output, 1024, 2).unwrap();
+        let sampler = FftFixedInOut::new(config::AUDIO_SAMPLE_RATE as usize, sample_rate_output, 1024, 2).unwrap();
+        println!("sampler input required size: {}", sampler.input_frames_next());
         APU {  
             square_length: [0; 2],
             square_rate: [0; 2],
@@ -100,6 +111,10 @@ impl APU {
             square_envelope_cnt: [0; 2],
 
             square_disable: [false; 2],
+
+            direct_sound_fifo: vec![VecDeque::<i8>::with_capacity(64); 2],
+            direct_sound_fifo_cur: [0; 2],
+            direct_sound_timer: [None; 2],
 
             sound_in_buff: sampler.input_buffer_allocate(),
             sound_out_buff: sampler.output_buffer_allocate(),
@@ -111,8 +126,8 @@ impl APU {
         }
     }
 
-    // called every 512 clocks
-    pub fn clock_512(&mut self, bus: &Bus) {
+    // called every config::AUDIO_SAMPLE_CLOCKS clocks
+    pub fn clock(&mut self, bus: &Bus) {
         self.square_disable[0] = false;
         self.square_disable[1] = false;
         let mut cur_tuple = StereoTuple::new();
@@ -121,6 +136,8 @@ impl APU {
             // sound enabled
             let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
             let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
+            
+            let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];
 
             // square channels
             for i in 0..2 {
@@ -172,7 +189,7 @@ impl APU {
                         }
                         self.square_envelope_cnt[i] = 0;
                     }
-                    self.square_envelope_cnt[i] += 512;
+                    self.square_envelope_cnt[i] += config::AUDIO_SAMPLE_CLOCKS;
                 }
 
                 // process duty cycle
@@ -198,22 +215,45 @@ impl APU {
                         _ => unreachable!(),
                     } as i16;
                     if self.square_sweep_cnt[i] % period_clocks < active_clocks {
-                        cur_tuple.add(j, final_square_vol);
+                        cur_tuple.add(j, final_square_vol * dmg_vol[j]);
                     }
                     else{
-                        cur_tuple.add(j, -final_square_vol);
+                        cur_tuple.add(j, -final_square_vol * dmg_vol[j]);
                     }
                 }
 
-                self.square_sweep_cnt[i] += 512;
+                self.square_sweep_cnt[i] += config::AUDIO_SAMPLE_CLOCKS;
                 if self.square_length[i] > 0 {
                     self.square_length[i] -= 1;
                 }
             }
             
+            // Direct Sound
+            for i in 0..2 {
+                let enable_right_left = [(snd_ds_cnt >> (8 + 4 * i)) & 1 > 0, (snd_ds_cnt >> (9 + 4 * i)) & 1 > 0];
+                if !enable_right_left[0] && !enable_right_left[1] {
+                    continue;
+                }
+                // sound right and left channels
+                for j in 0..2 {
+                    if !enable_right_left[j]{
+                        continue;
+                    }
+                    let final_sample = match (snd_ds_cnt >> (2 + j)) & 1 {
+                        0 => self.direct_sound_fifo_cur[i] >> 1,
+                        1 => self.direct_sound_fifo_cur[i],
+                        _ => unreachable!()
+                    };
+                    if final_sample as i16 != 0{
+                        //println!("playing from direct sound: {:#x}, ds_cnt: {:#018b}, channel: {}, snd_bias: {:#018b}", final_sample, snd_ds_cnt, i, bus.read_halfword(0x04000088));
+                    }
+                    cur_tuple.add(j, final_sample as i16);
+                }
+            }
+
             // process volume
-            cur_tuple.multiply(0, snd_dmg_cnt as i16 & 0b111);
-            cur_tuple.multiply(1, (snd_dmg_cnt >> 4) as i16 & 0b111);
+            //cur_tuple.multiply(0, snd_dmg_cnt as i16 & 0b111);
+            //cur_tuple.multiply(1, (snd_dmg_cnt >> 4) as i16 & 0b111);
 
             // process bias
             let snd_bias = bus.read_word_raw(0x04000088);
@@ -225,11 +265,12 @@ impl APU {
             cur_tuple.clip();
         }
 
-        self.sound_in_buff[0].push(match cur_tuple.0 {
+        // output channel 0 is left not right
+        self.sound_in_buff[1].push(match cur_tuple.0 {
             None => 0f32,
             Some(val) => (val as f32 - 512.) / 512.,
         });
-        self.sound_in_buff[1].push(match cur_tuple.1 {
+        self.sound_in_buff[0].push(match cur_tuple.1 {
             None => 0f32,
             Some(val) => (val as f32 - 512.)  / 512.,
         });

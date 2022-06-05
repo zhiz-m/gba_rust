@@ -9,6 +9,8 @@ pub struct Timer {
     pub raise_interrupt: bool,
     pub is_cascading: bool,
     pub is_enabled: bool,
+
+    direct_sound_channel: Option<usize>,
 }
 
 impl Timer{
@@ -22,6 +24,8 @@ impl Timer{
             raise_interrupt: false,
             is_cascading: false,
             is_enabled: false,
+            
+            direct_sound_channel: None,
         }
     }
 
@@ -37,11 +41,12 @@ impl Timer{
         //println!("timer: {}, freq: {}", self.timer_no, self.freq);
     }
 
-    // assumes timer is not enabled yet
     pub fn set_is_enabled(&mut self, enable: bool) {
         if enable && !self.is_enabled{
             self.timer_count = self.reload_val;
-            //println!("timer: {}, reload: {}", self.timer_no, self.reload_val);
+        }
+        else if !enable && self.is_enabled{
+
         }
         self.is_enabled = enable;
     }
@@ -55,7 +60,28 @@ impl Timer{
         if self.cur_cycle >= self.freq {
             self.cur_cycle = 0;
             self.timer_count += 1;
+
             if self.timer_count == 0 {
+                // increment the position of next Direct Sound sample played
+                if let Some(timer_no) = bus.apu.direct_sound_timer[0] {
+                    if timer_no == self.timer_no{
+                        //bus.apu.direct_sound_fifo_cur[0] = *bus.apu.direct_sound_fifo[0].front().unwrap();
+                        if let Some(val) = bus.apu.direct_sound_fifo[0].pop_front(){
+                            bus.apu.direct_sound_fifo_cur[0] = val;
+                        }
+                        else{
+                            //bus.apu.direct_sound_fifo_cur[0] = 0;
+                            println!("timer overflow; attempted read from empty fifo")
+                        }
+                    }
+                }
+                if let Some(timer_no) = bus.apu.direct_sound_timer[1] {
+                    if timer_no == self.timer_no{
+                        if let Some(val) = bus.apu.direct_sound_fifo[1].pop_front(){
+                            bus.apu.direct_sound_fifo_cur[1] = val;
+                        }
+                    }
+                }
                 self.timer_count = self.reload_val;
                 if self.raise_interrupt{
                     bus.cpu_interrupt(1 << (3 + self.timer_no));

@@ -107,7 +107,9 @@ impl Frontend{
                                 stereo_frame[1] = stereo_data.1;
                             }
                         }
-                        Err(why) => println!("audio stream err: {}", why.to_string()),
+                        Err(why) => {
+                            //println!("audio stream err: {}", why.to_string())
+                        },
                     }
                 }
             },
