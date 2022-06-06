@@ -169,6 +169,9 @@ impl DMA_Channel {
 
         self.is_repeating = self.timing_mode == TimingMode::FIFO || (self.timing_mode != TimingMode::Immediate && (dma_cnt >> 0x19) & 1 > 0);
 
+        if self.channel_no != 1 && self.channel_no != 2 {
+            println!("dest: {:#x}, channel_no: {}", self.dest_addr, self.channel_no);
+        }
         //if self.timing_mode != TimingMode::FIFO{
             for _ in 0..self.num_transfers{
                 //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));

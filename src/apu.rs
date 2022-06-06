@@ -5,7 +5,7 @@ use crate::{
     bus::Bus,
     config
 };
-use rubato::{Resampler, FftFixedInOut};
+use rubato::{Resampler, FftFixedInOut, InterpolationParameters, InterpolationType, SincFixedIn};
 
 // StereoTuple.0 is right, StereoTuple.1 is left
 struct StereoTuple(Option<i16>, Option<i16>);
@@ -91,14 +91,14 @@ pub struct APU {
 
 impl APU {
     pub fn new(sample_rate_output: usize, audio_sender: Sender<(f32, f32)>) -> APU {
-       /* let params = InterpolationParameters{
+        /*let params = InterpolationParameters{
             sinc_len: 256,
             f_cutoff: 0.95,
             oversampling_factor: 128,
             interpolation: InterpolationType::Cubic,
             window: rubato::WindowFunction::Hann,
         };
-        let sampler = SincFixedIn::new(sample_rate_output as f64 / 32768f64, sample_rate_output as f64 / 32768f64, params, 1024, 2).unwrap();
+        let sampler = SincFixedIn::new(sample_rate_output as f64 / config::AUDIO_SAMPLE_RATE as f64, 1f64, params, 1024, 2).unwrap();
         */
         let sampler = FftFixedInOut::new(config::AUDIO_SAMPLE_RATE as usize, sample_rate_output, 1024, 2).unwrap();
         println!("sampler input required size: {}", sampler.input_frames_next());
@@ -135,6 +135,7 @@ impl APU {
         if (snd_stat >> 7) & 1 > 0{
             // sound enabled
             let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
+            //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
             let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
             
             let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];

@@ -143,11 +143,11 @@ impl CPU{
                 //self.debug = true;
                 self.execute_hardware_interrupt()
             }
-            else if self.halt {
-                1 // consume clock cycle; do nothing
-            }
             else if self.check_dma(bus){
                 self.execute_dma(bus)
+            }
+            else if self.halt {
+                1 // consume clock cycle; do nothing
             }
             else{
                 match self.read_flag(Flag::T) {

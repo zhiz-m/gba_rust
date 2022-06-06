@@ -70,8 +70,7 @@ impl Timer{
                             bus.apu.direct_sound_fifo_cur[0] = val;
                         }
                         else{
-                            //bus.apu.direct_sound_fifo_cur[0] = 0;
-                            println!("timer overflow; attempted read from empty fifo")
+                            //println!("timer overflow; attempted read from empty fifo")
                         }
                     }
                 }

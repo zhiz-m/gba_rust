@@ -251,8 +251,8 @@ impl Bus {
     }
 
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
-        let reg_if = self.read_halfword(0x04000202);
-        let cur_reg_if = interrupt & self.read_halfword(0x04000200);
+        let reg_if = self.read_halfword_raw(0x04000202);
+        let cur_reg_if = interrupt & self.read_halfword_raw(0x04000200);
         self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
     }
 
@@ -363,14 +363,20 @@ impl Bus {
 
                         // special handling for DMA
                         0x040000bb | 0x040000c7 | 0x040000d3 | 0x040000df => {
+                            let old_val = self.mem[addr];
                             self.mem[addr] = val;
                             let channel_no = (addr - 0x040000bb) / 12;
                             //println!("addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
-                            let dma_channel = if val >> 7 > 0{
+                            let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0{
+                                //println!("enabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                                 DMA_Channel::new_enabled(channel_no, self)
                             }
-                            else{
+                            else if val >> 7 == 0{
+                                //println!("disabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                                 DMA_Channel::new_disabled(channel_no)
+                            }
+                            else{
+                                return;
                             };
                             self.dma_channels[channel_no] = dma_channel;
                             self.set_is_any_dma_active();
@@ -405,9 +411,6 @@ impl Bus {
                                 (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
                                 (*ptr).set_is_enabled((val >> 7) & 1 > 0);
                                 self.set_is_any_timer_active();
-                                //if (*ptr).is_enabled {
-                                //    println!("timer {} enabled", timer_no);
-                                //}
                             }
                         },
 
@@ -453,7 +456,6 @@ impl Bus {
                                 else{
                                     self.apu.direct_sound_timer[i] = Some((val as usize >> (2 + i * 4)) & 1);
                                 }
-                                println!("clear fifo: {}", i);
                                 self.apu.direct_sound_fifo[i].clear();
                             }
                         }
@@ -468,10 +470,17 @@ impl Bus {
                             else{
                                 //self.apu.direct_sound_fifo[channel_num].pop_back();
                                 //self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
-                                println!("sound fifo: {}, attempt to add sample at 32 capacity", channel_num);
+                                //println!("sound fifo: {}, attempt to add sample at 32 capacity", channel_num);
                             }
                             // do not write to mem directly
                             return;
+                        }
+                        0x04000084 => {
+                            if (val >> 7) & 1 == 0 {
+                                for i in 0x04000060..=0x04000081{
+                                    self.mem[i] = 0;
+                                }
+                            }
                         }
                         _ => {},
                     }
