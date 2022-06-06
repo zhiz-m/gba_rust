@@ -97,7 +97,7 @@ pub struct Bus{
 }
 
 impl Bus {
-    pub fn new(rom_path : String, cartridge_type_str: Option<String>, apu: APU) -> Bus{
+    pub fn new(rom_path : String, save_state: Option<&[u8]>, cartridge_type_str: Option<String>, apu: APU) -> Bus{
         let mut mem = vec![0; MEM_MAX];
 
         // load BIOS
@@ -124,6 +124,11 @@ impl Bus {
                 }
             }
         };
+
+        // load save state
+        if let Some(buf) = save_state {
+            mem[0x0e000000..0x0e020000].copy_from_slice(buf);
+        }
 
         println!("backup type: {}", cartridge_type as u32);
 
@@ -277,6 +282,10 @@ impl Bus {
         unsafe {
             (*ptr).clock(self);
         }
+    }
+
+    pub fn export_sram(&self, buff: &mut [u8]) {
+        buff.copy_from_slice(&self.mem[0x0e000000..0x0e020000]);
     }
 
     // -------- helper functions
@@ -579,7 +588,7 @@ impl Bus {
                         2 => {
                             if addr & 0xfff == 0 && self.cartridge_type_state[0] != 0 && self.cartridge_type_state[1] != 0 && val == 0x30 {
                                 // special: erase entire sector
-                                println!("sector erase: {:#x}", addr);
+                                //println!("sector erase: {:#x}", addr);
                                 let addr = 
                                 match self.cartridge_type{
                                     CartridgeType::FLASH64 => {

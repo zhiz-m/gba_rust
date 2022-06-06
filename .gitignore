@@ -3,5 +3,6 @@
 *.gba
 *.sav
 *.txt
+*.rustsav
 /.vscode
 /reference_materials

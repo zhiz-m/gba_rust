@@ -1,3 +1,4 @@
+mod gba;
 mod bus;
 mod cpu;
 mod ppu;
@@ -9,114 +10,36 @@ mod algorithm;
 mod timer;
 mod apu;
 
-use bus::Bus;
-use cpu::CPU;
-use input_handler::KeyInput;
-use ppu::{
-    PPU, ScreenBuffer
-};
-use apu::APU;
-use frontend::{
-    Frontend
-};
-use input_handler::InputHandler;
+use clap::Parser;
+use frontend::Frontend;
 
-use std::{env, thread, time:: {SystemTime, UNIX_EPOCH}, sync::mpsc::{self, Sender, Receiver}};
+use std::{env, thread, sync::mpsc};
 
-#[cfg(not(feature="no_limit_cps"))]
-use std::time::Duration;
+#[derive(Parser)]
+#[clap(about="GBA emulator written in Rust")]
+struct Arguments{
+    /// Path to .gba ROM
+    #[clap(short='o',long,)]
+    rom_path: String,
 
-struct GBA {
-    bus: Bus,
-    cpu: CPU,
-    ppu: PPU,
-    input_handler: InputHandler,
+    /// Path to .rustsav save file for ROM
+    #[clap(short='s',long,)]
+    rom_save_path: Option<String>,
 
-    screenbuf_sender: Sender<ScreenBuffer>,
-    key_receiver: Receiver<(KeyInput,bool)>,
-}
+    /// Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]
+    #[clap(short,long)]
+    cartridge_type_str: Option<String>,
 
-impl GBA {
-    pub fn new(rom_path: String, cartridge_type_str: Option<String>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>, audio_sender: Sender<(f32, f32)>, audio_sample_rate: usize) -> GBA {
-        let apu = APU::new(audio_sample_rate, audio_sender);
-        let res = GBA { 
-            bus: Bus::new(rom_path, cartridge_type_str, apu), 
-            cpu: CPU::new(), 
-            ppu: PPU::new(), 
-            input_handler: InputHandler::new(),
-            screenbuf_sender,
-            key_receiver,
-        };
-
-        // zero out input registers (NOTE: handled by BIOS)
-        //res.input_handler.process_input(&res.key_receiver, &mut res.bus);
-
-        res
-    }
-
-    pub fn start(&mut self) -> Result<(), &'static str> {
-        let mut clock: u64 = 0;
-
-        #[cfg(not(feature="no_limit_cps"))]
-        let mut last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        
-        #[cfg(feature="print_cps")]
-        let mut last_clock_print_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        loop {
-            if clock & (16 * 1024 * 1024 - 1) == 0{
-                #[cfg(feature="print_cps")]
-                {
-                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-                    let since = now.checked_sub(last_clock_print_time).unwrap().as_millis();
-                    if since > 0{
-                        let cps = 16. * 1024. * 1024. * 1000. / since as f64;
-                        last_clock_print_time = now;
-                        println!("clocks per second: {:#.3}", cps);
-                    }
-                }
-                #[cfg(feature="debug_instr")]
-                {
-                    self.cpu.debug_cnt += 200;
-                }
-            }
-
-            // timer clock
-            self.bus.timer_clock();
-
-            if clock & (config::AUDIO_SAMPLE_CLOCKS as u64-1) == 0{
-                self.bus.apu_clock();
-            }
-
-            // cpu clock
-            self.cpu.clock(&mut self.bus);
-
-            // ppu clock and check if frame has completed.
-            if let Some(buff) = self.ppu.clock(&mut self.bus){
-                if let Err(why) = self.screenbuf_sender.send(buff){
-                    println!("   screenbuf sending error: {}", why.to_string());
-                }
-
-                // handle input once per frame
-                self.input_handler.process_input(&self.key_receiver, &mut self.bus);
-            }
-            
-            clock += 1;
-
-            #[cfg(not(feature="no_limit_cps"))]
-            if clock % config::CPU_EXECUTION_INTERVAL_CLOCKS == 0{
-                while SystemTime::now().duration_since(UNIX_EPOCH).unwrap().checked_sub(last_finished_time).unwrap().as_nanos() < config::CPU_EXECUTION_INTERVAL_NS as u128{
-                    // polling
-                }
-                last_finished_time = last_finished_time.checked_add(Duration::from_nanos(config::CPU_EXECUTION_INTERVAL_NS)).unwrap();
-            }
-            
-        }
-    }
+    /// Save bank to load from
+    #[clap(short='b',long)]
+    save_state_bank: Option<usize>,
 }
 
 fn main() {
-    let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
-    let cartridge_type_str = env::args().nth(2);
+    let cli = Arguments::parse();
+    //let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
+    //let rom_save_path = env::args().nth(2);
+    //let cartridge_type_str = env::args().nth(3);
 
     let (tx, rx) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
@@ -124,8 +47,11 @@ fn main() {
     // audio
     let (tx3, rx3) = mpsc::channel();
 
-    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2, rx3);
-    let mut gba = GBA::new(rom_path, cartridge_type_str, tx, rx2, tx3, frontend.get_sample_rate());
+    // fps
+    let (tx4, rx4) = mpsc::channel();
+
+    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2, rx3, rx4);
+    let mut gba = gba::GBA::new(cli.rom_path, cli.rom_save_path, cli.save_state_bank, cli.cartridge_type_str, tx, rx2, tx3, frontend.get_sample_rate(), tx4);
 
     thread::spawn(move || {
         gba.start().unwrap();

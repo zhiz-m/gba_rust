@@ -34,10 +34,13 @@ pub struct Frontend{
 
     audio_output_device: Device,
     audio_receiver: Option<Receiver<(f32, f32)>>,
+
+    fps_receiver: Receiver<f64>,
+    //cur_fps: f64,
 }
 
 impl Frontend{
-    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>, audio_receiver: Receiver<(f32, f32)>) -> Frontend{
+    pub fn new(title: String, screenbuf_receiver: Receiver<ScreenBuffer>, key_sender: Sender<(KeyInput, bool)>, audio_receiver: Receiver<(f32, f32)>, fps_receiver: Receiver<f64>) -> Frontend{
         let audio_output_device = cpal::default_host().devices().unwrap().map(|x| {
             if x.default_output_config().ok()?.channels() == 2{
                 Some(x)
@@ -66,11 +69,20 @@ impl Frontend{
                 (Key::Down, KeyInput::Down),
                 (Key::Right, KeyInput::Right),
                 (Key::Left, KeyInput::Left),
+                (Key::Space, KeyInput::Speedup),
+                (Key::D1, KeyInput::Save0),
+                (Key::D2, KeyInput::Save1),
+                (Key::D3, KeyInput::Save2),
+                (Key::D4, KeyInput::Save3),
+                (Key::D5, KeyInput::Save4),
             ]),
             key_sender,
 
             audio_output_device,
             audio_receiver: Some(audio_receiver),
+
+            fps_receiver,
+            //cur_fps: 0.,
         }
     }
 
@@ -87,7 +99,6 @@ impl Frontend{
             .unwrap());
         self.gl = Some(GlGraphics::new(OpenGL::V3_2));
         self.events = Some(Events::new(EventSettings::new()));
-
         let config = self.audio_output_device.default_output_config().unwrap().into();
         let receiver = self.audio_receiver.take().unwrap();
         //let mut t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -130,6 +141,9 @@ impl Frontend{
         if let Some(e) = self.events.as_mut().unwrap().next(self.window.as_mut().unwrap()){
             while let Ok(buf) = self.screenbuf_receiver.try_recv() {
                 self.last_screenbuf = buf;
+            }
+            while let Ok(fps) = self.fps_receiver.try_recv() {
+                self.window.as_ref().unwrap().ctx.window().set_title(&format!("{}: FPS {:.3}", self.title, fps));
             }
             if let Some(args) = e.render_args(){
                 let square = rectangle::square(0.0, 0.0, 2.);

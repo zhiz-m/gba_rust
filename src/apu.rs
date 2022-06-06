@@ -86,6 +86,8 @@ pub struct APU {
     sampler: FftFixedInOut<f32>,
     audio_sender: Sender<(f32, f32)>,
 
+    pub extern_audio_enabled: bool,
+
     //t: Duration,
 }
 
@@ -121,8 +123,7 @@ impl APU {
             sampler,
             audio_sender,
 
-            //t: SystemTime::now().duration_since(UNIX_EPOCH).unwrap()
-
+            extern_audio_enabled: true,
         }
     }
 
@@ -278,8 +279,10 @@ impl APU {
 
         if self.sound_in_buff[0].len() == self.sampler.input_frames_next() {
             self.sampler.process_into_buffer(&self.sound_in_buff, &mut self.sound_out_buff, None).unwrap();
-            for j in 0..self.sound_out_buff[0].len(){
-                self.audio_sender.send((self.sound_out_buff[0][j], self.sound_out_buff[1][j])).unwrap();
+            if self.extern_audio_enabled{
+                for j in 0..self.sound_out_buff[0].len(){
+                    self.audio_sender.send((self.sound_out_buff[0][j], self.sound_out_buff[1][j])).unwrap();
+                }
             }
             self.sound_in_buff[0].clear();
             self.sound_in_buff[1].clear();

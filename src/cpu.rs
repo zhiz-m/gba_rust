@@ -23,13 +23,7 @@ enum OperatingMode{
     Sys = 5, 
     Und = 6
 }
-/*
-#[derive(PartialEq)]
-enum InstructionSet {
-    Arm,
-    Thumb
-}
-*/
+
 enum Flag{
     N = 31,
     Z = 30,

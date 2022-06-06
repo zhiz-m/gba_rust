@@ -169,32 +169,16 @@ impl DMA_Channel {
 
         self.is_repeating = self.timing_mode == TimingMode::FIFO || (self.timing_mode != TimingMode::Immediate && (dma_cnt >> 0x19) & 1 > 0);
 
-        if self.channel_no != 1 && self.channel_no != 2 {
-            println!("dest: {:#x}, channel_no: {}", self.dest_addr, self.channel_no);
+        for _ in 0..self.num_transfers{
+            //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
+            match self.chunk_size{
+                ChunkSize::Halfword => bus.store_halfword(self.dest_addr, bus.read_halfword(self.src_addr)),
+                ChunkSize::Word => bus.store_word(self.dest_addr, bus.read_word(self.src_addr)),
+                _ => panic!("DMA chunk size must be Word or Halfword")
+            };
+            self.src_addr += self.src_increment * self.chunk_size as usize;
+            self.dest_addr += self.dest_increment * self.chunk_size as usize;
         }
-        //if self.timing_mode != TimingMode::FIFO{
-            for _ in 0..self.num_transfers{
-                //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
-                match self.chunk_size{
-                    ChunkSize::Halfword => bus.store_halfword(self.dest_addr, bus.read_halfword(self.src_addr)),
-                    ChunkSize::Word => bus.store_word(self.dest_addr, bus.read_word(self.src_addr)),
-                    _ => panic!("DMA chunk size must be Word or Halfword")
-                };
-                self.src_addr += self.src_increment * self.chunk_size as usize;
-                self.dest_addr += self.dest_increment * self.chunk_size as usize;
-            }
-        /*}
-        else{
-            let channel_num = (self.dest_addr- 0x040000a0) >> 2;
-            for _ in 0..self.num_transfers{
-                let word = bus.read_word(self.src_addr);
-                bus.apu.direct_sound_fifo[channel_num].push_back((word & 0b11111111) as i8);
-                bus.apu.direct_sound_fifo[channel_num].push_back(((word >> 8) & 0b11111111) as i8);
-                bus.apu.direct_sound_fifo[channel_num].push_back(((word >> 16) & 0b11111111) as i8);
-                bus.apu.direct_sound_fifo[channel_num].push_back(((word >> 24) & 0b11111111) as i8);
-                self.src_addr += self.src_increment * self.chunk_size as usize;
-            }
-        }*/
 
         // if not repeating, set inactive and clear the associated bit in memory
         if !self.is_repeating {
