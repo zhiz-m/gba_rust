@@ -35,6 +35,8 @@ enum Flag{
 }
 
 pub struct CPU{
+    arm_instr_table: Vec<fn(&mut CPU, &mut Bus) -> u32>,
+
     reg: [u32; 37],
     pub instr: u32,
     shifter_carry: u32, // 0 or 1 only
@@ -53,6 +55,7 @@ pub struct CPU{
     thumb_modify_flags: bool,
 
     halt: bool,
+    pub interrupt_requested: bool,
     //interrupt: u16, // same format as REG_IE and REG_IF. But, it is cleared to 0 everytime an interrupt begins executing to prevent infinite loop. 
 
     #[cfg(feature="debug_instr")]
@@ -64,6 +67,7 @@ pub struct CPU{
 impl CPU{
     pub fn new() -> CPU {
         let mut res = CPU { 
+            arm_instr_table: CPU::generate_arm_decode_table(),
             reg: [0; 37], 
             instr: 0,
             shifter_carry: 0,
@@ -98,6 +102,7 @@ impl CPU{
             thumb_modify_flags: true,
             
             halt: false,
+            interrupt_requested: false,
             
             #[cfg(feature="debug_instr")]
             debug_cnt: 0,
@@ -121,27 +126,28 @@ impl CPU{
                 self.bios_end = true;
             }
             // check for halting (pause cpu)
-            if bus.check_cpu_halt_request() {
+            /*if bus.check_cpu_halt_request() {
                 self.halt();
-            }
+            }*/
 
             //self.debug(&format!("halting: {}\n", self.halt));
             //self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
 
             self.clock_cur += 
             
-            if self.check_interrupt(bus){
+            if self.check_dma(bus){
+                self.execute_dma(bus)
+            }
+            else if self.check_interrupt(bus){
                 self.halt = false;
                 //self.bus_set_reg_if(bus);
                 //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
                 //self.debug = true;
                 self.execute_hardware_interrupt()
             }
-            else if self.check_dma(bus){
-                self.execute_dma(bus)
-            }
+            
             else if self.halt {
-                1 // consume clock cycle; do nothing
+                1 // consume clock cycles; do nothing
             }
             else{
                 match self.read_flag(Flag::T) {
@@ -152,6 +158,7 @@ impl CPU{
             
             //self.interrupt = 0;
         }
+        #[cfg(feature="debug_instr")]
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
     }
@@ -1252,6 +1259,80 @@ impl CPU{
 
     // ------------- THUMB INSTRUCTIONS -----------
     
+    fn generate_arm_decode_table() -> Vec::<fn(&mut CPU, &mut Bus) -> u32>{
+        let mut res = Vec::<fn(&mut CPU, &mut Bus) -> u32>::with_capacity(256);
+        for i in 0..256u32 {
+            let instr = i << 8;
+            let f = 
+            if (instr >> 11) & 0b11111 == 0b00011 {
+                CPU::execute_thumb_add_sub_imm3
+            }
+            else if (instr >> 8) == 0b11011111 {
+                CPU::execute_thumb_software_interrupt
+            }
+            else if (instr >> 10) & 0b111111 == 0b010000 {
+                CPU::execute_thumb_alu_general
+            }
+            else if (instr >> 10) & 0b111111 == 0b010001 {
+                CPU::execute_thumb_hi_bx
+            }
+            else if (instr >> 11) & 0b11111 == 0b01001 {
+                CPU::execute_thumb_pc_relative_load
+            }
+            else if (instr >> 12) & 0b1111 == 0b0101 && (instr >> 9) & 1 == 0{
+                CPU::execute_thumb_load_store_reg_offset
+            }
+            else if (instr >> 12) & 0b1111 == 0b0101 && (instr >> 9) & 1 == 1{
+                CPU::execute_thumb_load_store_signed
+            }
+            else if (instr >> 8) & 0b11111111 == 0b10110000{
+                CPU::execute_thumb_sp_offset
+            }
+            else if (instr >> 9) & 0b11 == 0b10 && (instr >> 12) & 0b1111 == 0b1011{
+                CPU::execute_thumb_push_pop
+            }
+            else if (instr >> 11) & 0b11111 == 0b11100 {
+                CPU::execute_thumb_uncond_branch
+            }
+            else{
+                match (instr >> 12) & 0b1111 {
+                    0b0001 | 0b0000 => {
+                        CPU::execute_thumb_lsl_lsr_asr_imm5
+                    },
+                    0b0010 | 0b0011 => {
+                        CPU::execute_thumb_mov_cmp_add_sub_imm8
+                    },
+                    0b0111 | 0b0110 => {
+                        CPU::execute_thumb_load_store_imm5
+                    },
+                    0b1000 => {
+                        CPU::execute_thumb_load_store_halfword_imm5
+                    },
+                    0b1001 => {
+                        CPU::execute_thumb_load_store_sp
+                    },
+                    0b1010 => {
+                        CPU::execute_thumb_load_address
+                    },
+                    0b1100 => {
+                        CPU::execute_thumb_load_store_multiple
+                    },
+                    0b1101 => {
+                        CPU::execute_thumb_cond_branch
+                    }
+                    0b1111 => {
+                        CPU::execute_thumb_uncond_branch_link
+                    }
+                    _ => {
+                        CPU::execute_thumb_undefined_instr
+                    }
+                }
+            };
+            res.push(f);
+        }
+        res
+    }
+
     fn decode_execute_instruction_thumb(&mut self, bus: &mut Bus) -> u32 {
         // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
         let aligned_pc = self.actual_pc & !0b01;
@@ -1269,7 +1350,8 @@ impl CPU{
         self.shifter_carry = 0;
 
         cur_cycles += 
-        if (self.instr >> 11) & 0b11111 == 0b00011 {
+        self.arm_instr_table[self.instr as usize >> 8](self, bus);
+        /*if (self.instr >> 11) & 0b11111 == 0b00011 {
             self.debug("        thumb ADD SUB");
             self.execute_thumb_add_sub_imm3()
         }
@@ -1352,7 +1434,7 @@ impl CPU{
                     0
                 }
             }
-        };
+        };*/
         if self.increment_pc {
             self.actual_pc += 0b010;
         }
@@ -1362,8 +1444,14 @@ impl CPU{
         cur_cycles
     }
 
+    fn execute_thumb_undefined_instr(&mut self, _: &mut Bus) -> u32{
+        print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
+        0
+    }
+
     // ---------- move shifted register
-    fn execute_thumb_lsl_lsr_asr_imm5(&mut self) -> u32 {
+    fn execute_thumb_lsl_lsr_asr_imm5(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb LSL LSR ASR imm5");
         self.reg_dest = self.instr & 0b111;
         self.operand1 = self.read_reg((self.instr >> 3) & 0b111);
         self.operand2 = (self.instr >> 6) & 0b11111;
@@ -1471,7 +1559,8 @@ impl CPU{
     }
 
     // ---------- add, sub- imm3
-    fn execute_thumb_add_sub_imm3(&mut self) -> u32 {
+    fn execute_thumb_add_sub_imm3(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb ADD SUB");
         self.reg_dest = self.instr & 0b111;
         let I = (self.instr >> 10) & 1 > 0;
         self.operand1 = self.read_reg((self.instr >> 3) & 0b111);
@@ -1493,7 +1582,8 @@ impl CPU{
     }
 
     // ---------- mov, cmp, add, sub- imm8
-    fn execute_thumb_mov_cmp_add_sub_imm8(&mut self) -> u32 {
+    fn execute_thumb_mov_cmp_add_sub_imm8(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb MOV CMP ADD SUB imm8");
         self.operand2 = self.instr & 0b11111111;
         self.reg_dest = (self.instr >> 8) & 0b111;
         // same dest and source reg
@@ -1510,7 +1600,8 @@ impl CPU{
         1
     }
 
-    fn execute_thumb_alu_general(&mut self) -> u32 {
+    fn execute_thumb_alu_general(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb ALU general");
         self.operand2 = self.read_reg((self.instr >> 3) & 0b111);
         self.reg_dest = self.instr & 0b111;
         // same dest and source reg
@@ -1607,7 +1698,8 @@ impl CPU{
         return 2;
     }
 
-    fn execute_thumb_hi_bx(&mut self) -> u32 { 
+    fn execute_thumb_hi_bx(&mut self, _: &mut Bus) -> u32 { 
+        self.debug("        thumb Hi reg operations or BX");
         self.reg_dest = self.instr & 0b111;
         if (self.instr >> 7) & 1 > 0{
             self.reg_dest += 8;
@@ -1649,7 +1741,8 @@ impl CPU{
         clocks
     }
 
-    fn execute_thumb_pc_relative_load(&mut self, bus: &Bus) -> u32 {
+    fn execute_thumb_pc_relative_load(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb pc relative load");
         let offset = (self.instr & 0b11111111) << 2;
         self.reg_dest = (self.instr >> 8) & 0b111;
         let addr = Wrapping(self.actual_pc) + Wrapping(4) + Wrapping(offset);
@@ -1660,6 +1753,7 @@ impl CPU{
     }
 
     fn execute_thumb_load_store_reg_offset(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb load/store reg offset");
         let L = (self.instr >> 11) & 1 > 0;
         let B = (self.instr >> 10) & 1 > 0;
 
@@ -1698,6 +1792,7 @@ impl CPU{
     }
 
     fn execute_thumb_load_store_signed(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb load/store reg signed byte/halfword");
         let H = (self.instr >> 11) & 1 > 0;
         let S = (self.instr >> 10) & 1 > 0;
 
@@ -1751,6 +1846,7 @@ impl CPU{
     }
 
     fn execute_thumb_load_store_imm5(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb load/store reg imm5");
         let B = (self.instr >> 12) & 1 > 0;
         let L = (self.instr >> 11) & 1 > 0;
         self.reg_dest = self.instr & 0b111;
@@ -1789,6 +1885,7 @@ impl CPU{
     }
 
     fn execute_thumb_load_store_halfword_imm5(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb load/store halfword imm5");
         self.reg_dest = self.instr & 0b111;
         let addr = Wrapping(self.read_reg((self.instr >> 3) & 0b111)) + Wrapping(((self.instr >> 6) & 0b11111) << 1);
         let rotate = (addr.0 & 1) * 8;
@@ -1817,6 +1914,7 @@ impl CPU{
     // R13 will be used here. May need to be modified. 
     // STR, LDR
     fn execute_thumb_load_store_sp(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb load/store word sp offset");
         let L = (self.instr >> 11) & 1 > 0;
         let addr = Wrapping(self.read_reg(13)) + Wrapping((self.instr & 0b11111111) << 2);
         let rotate = (addr.0 & 0b11) * 8;
@@ -1839,7 +1937,8 @@ impl CPU{
         }
     }
 
-    fn execute_thumb_load_address(&mut self) -> u32 {
+    fn execute_thumb_load_address(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb load address sp/pc");
         let SP = (self.instr >> 11) & 1 > 0;
         self.reg_dest = (self.instr >> 8) & 0b111;
         let offset = Wrapping((self.instr & 0b11111111) << 2);
@@ -1853,7 +1952,8 @@ impl CPU{
         1
     }
 
-    fn execute_thumb_sp_offset(&mut self) -> u32 {
+    fn execute_thumb_sp_offset(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb sp offset");
         let offset = Wrapping((self.instr & 0b1111111) << 2);
         let neg = (self.instr >> 7) & 1 > 0;
         let mut res = Wrapping(self.read_reg(13));
@@ -1867,6 +1967,7 @@ impl CPU{
     }
 
     fn execute_thumb_push_pop(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb push/pop");
         let L = (self.instr >> 11) & 1 > 0;
         let R = (self.instr >> 8) & 1 > 0;
         let reg_list = self.instr & 0b11111111;
@@ -1924,6 +2025,7 @@ impl CPU{
     }
 
     fn execute_thumb_load_store_multiple(&mut self, bus: &mut Bus) -> u32 {
+        self.debug("        thumb multiple load/store");
         let reg_list = self.instr & 0b11111111;
         let L = (self.instr >> 11) & 1 > 0;
         let base_reg = (self.instr >> 8) & 0b111;
@@ -1967,7 +2069,8 @@ impl CPU{
         }
     }
 
-    fn execute_thumb_cond_branch(&mut self) -> u32 {
+    fn execute_thumb_cond_branch(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb cond branch");
         if self.check_cond((self.instr >> 8) & 0b1111){
             let mut offset = (self.instr & 0b11111111) << 1;
             //print!(" offset {:#014b}", offset);
@@ -1984,7 +2087,8 @@ impl CPU{
         }
     }
 
-    fn execute_thumb_uncond_branch(&mut self) -> u32 {
+    fn execute_thumb_uncond_branch(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb uncond branch");
         let mut offset = (self.instr & 0b11111111111) << 1;
         if (offset >> 11) & 1 > 0 {
             offset |= (!0) << 12;
@@ -1997,7 +2101,8 @@ impl CPU{
         3
     }
 
-    fn execute_thumb_uncond_branch_link(&mut self) -> u32 {
+    fn execute_thumb_uncond_branch_link(&mut self, _: &mut Bus) -> u32 {
+        self.debug("        thumb long branch and link");
         let H = (self.instr >> 11) & 1 > 0;
         let mut offset = self.instr & 0b11111111111;
 
@@ -2022,14 +2127,19 @@ impl CPU{
         4
     }
 
+    fn execute_thumb_software_interrupt(&mut self, _: &mut Bus) -> u32{
+        self.debug("        thumb SWI");
+        self.execute_software_interrupt()
+    }
+
     // ---------- interrupts and halting
     pub fn halt(&mut self) {
         self.halt = true;
     }
     
-    fn check_interrupt(&self, bus: &Bus) -> bool {
+    pub fn check_interrupt(&self, bus: &Bus) -> bool {
         !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_word_raw(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
+        bus.read_byte_raw(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
         bus.read_halfword_raw(0x04000202) & bus.read_halfword_raw(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 

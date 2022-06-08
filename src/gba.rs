@@ -1,11 +1,11 @@
 
 use crate::{bus::Bus, cpu::CPU, ppu::{PPU, ScreenBuffer}, input_handler::{InputHandler, KeyInput}, apu::APU, config};
 
-use std::{thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{Sender, Receiver}, io::{BufReader, Read, BufWriter, Write}, fs::File, path::Path};
+use std::{thread, time:: {SystemTime, UNIX_EPOCH, Duration}, sync::mpsc::{Sender, Receiver}, io::{BufReader, Read, BufWriter, Write}, fs::{File, self}, path::Path};
 
 pub struct GBA {
     bus: Bus,
-    cpu: CPU,
+    //cpu: CPU,
     ppu: PPU,
     input_handler: InputHandler,
 
@@ -24,20 +24,31 @@ impl GBA {
         let rom_save_path = match rom_save_path {
             Some(path) => path,
             None => {
-                if !rom_path.contains("."){
-                    let pos = rom_path.rfind(".").unwrap();
-                    format!("{}{}", &rom_path[0..pos], ".rustsav")
+                let save_state_dir = Path::new(&rom_path).parent().unwrap().to_str().expect("invalid rom path").to_string() + config::SAVE_FILE_DIR;
+                fs::create_dir_all(&save_state_dir).unwrap();
+                let rom_path_filename = Path::new(&rom_path).file_name().unwrap().to_str().unwrap().to_string();
+                println!("save_state_dir: {}, rom_path_filename: {}", save_state_dir, rom_path_filename);
+                let rom_save_path = if rom_path_filename.contains("."){
+                    let pos = rom_path_filename.rfind(".").unwrap();
+                    if pos != 0{
+                        format!("{}{}", &rom_path_filename[0..pos], config::SAVE_FILE_SUF)
+                    }
+                    else{
+                        format!("{}{}", &rom_path_filename, config::SAVE_FILE_SUF)
+                    }
                 }
                 else{
-                    format!("{}{}", &rom_path, ".rustsav")
-                }
+                    format!("{}{}", &rom_path_filename, config::SAVE_FILE_SUF)
+                };
+                save_state_dir + "/" + &rom_save_path
             }
         }; 
+        println!("rom save path: {}", rom_save_path);
         
         let mut save_state = vec![vec![0; 128*1024]; config::NUM_SAVE_STATES];
         // read save path into save_state
         if Path::new(&rom_save_path).exists() {
-            let mut reader = BufReader::new(File::open(rom_save_path.clone()).unwrap());
+            let mut reader = BufReader::new(File::open(&rom_save_path).unwrap());
             for i in 0..config::NUM_SAVE_STATES{
                 reader.read(&mut save_state[i]).unwrap();
             }
@@ -50,7 +61,7 @@ impl GBA {
 
         let res = GBA { 
             bus: Bus::new(rom_path, initial_save_state, cartridge_type_str, apu), 
-            cpu: CPU::new(), 
+            //cpu: CPU::new(), 
             ppu: PPU::new(), 
             input_handler: InputHandler::new(),
             screenbuf_sender,
@@ -79,12 +90,12 @@ impl GBA {
             // timer clock
             self.bus.timer_clock();
 
+            // cpu clock
+            self.bus.cpu_clock();
+
             if clock & (config::AUDIO_SAMPLE_CLOCKS-1) == 0{
                 self.bus.apu_clock();
             }
-
-            // cpu clock
-            self.cpu.clock(&mut self.bus);
 
             // ppu clock and check if frame has completed.
             if let Some(buff) = self.ppu.clock(&mut self.bus){
@@ -98,6 +109,10 @@ impl GBA {
                     self.bus.apu.extern_audio_enabled = self.input_handler.prev_speedup_state;
                     if !self.input_handler.cur_speedup_state{
                         last_finished_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+                        self.ppu.frame_count_render = 1;
+                    }
+                    else{
+                        self.ppu.frame_count_render = config::FRAME_RENDER_INTERVAL_SPEEDUP;
                     }
                 }
                 let mut save_updated = false;
@@ -109,7 +124,7 @@ impl GBA {
                     }
                 }
                 if save_updated {
-                    let mut writer = BufWriter::new(File::create(self.rom_save_path.clone()).unwrap());
+                    let mut writer = BufWriter::new(File::create(&self.rom_save_path).unwrap());
                     for i in 0..config::NUM_SAVE_STATES{
                         writer.write(&self.save_state[i]).unwrap();
                     }
@@ -129,7 +144,7 @@ impl GBA {
                     }
                     
                     //while SystemTime::now().duration_since(UNIX_EPOCH).unwrap().checked_sub(last_finished_time).unwrap().as_nanos() < config::CPU_EXECUTION_INTERVAL_NS as u128{
-                        // polling
+                        //polling
                     //}
                     last_finished_time = last_finished_time.checked_add(Duration::from_nanos(config::CPU_EXECUTION_INTERVAL_NS as u64)).unwrap();
                 }
@@ -151,7 +166,7 @@ impl GBA {
                 }
                 #[cfg(feature="debug_instr")]
                 {
-                    self.cpu.debug_cnt += 200;
+                    self.bus.cpu.debug_cnt += 50;
                 }
 
                 clock = 0;

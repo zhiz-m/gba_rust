@@ -11,7 +11,7 @@ use crate::{
     },
     timer::Timer,
     config,
-    apu::APU,
+    apu::APU, cpu::CPU,
 };
 
 const MEM_MAX: usize = 268435456;
@@ -70,7 +70,7 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
 
 pub struct Bus{
     mem: Vec<u8>,
-    cpu_halt_request: bool,
+    //cpu_halt_request: bool,
     addr_special_handling: HashSet<usize, FastHashBuilder>,
 
     cartridge_type: CartridgeType,
@@ -93,6 +93,7 @@ pub struct Bus{
     pub is_any_timer_active: bool,
     timers: [Timer; 4],
 
+    pub cpu: CPU,
     pub apu: APU,
 }
 
@@ -134,7 +135,7 @@ impl Bus {
 
         let mut res = Bus { 
             mem,
-            cpu_halt_request: false,
+            //cpu_halt_request: false,
             addr_special_handling: HashSet::with_hasher(FastHashBuilder),
             cartridge_type,
             cartridge_type_state: [0; 7],
@@ -157,6 +158,7 @@ impl Bus {
                 Timer::new(3),
             ],
 
+            cpu: CPU::new(),
             apu,
         };
 
@@ -244,7 +246,7 @@ impl Bus {
     }
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
-    #[inline(always)]
+    /*#[inline(always)]
     pub fn check_cpu_halt_request(&mut self) -> bool {
         if self.cpu_halt_request {
             self.cpu_halt_request = false;
@@ -253,7 +255,7 @@ impl Bus {
         else{
             false
         }
-    }
+    }*/
 
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
         let reg_if = self.read_halfword_raw(0x04000202);
@@ -273,6 +275,13 @@ impl Bus {
                     (*ptr).cascade();
                 }
             }
+        }
+    }
+
+    pub fn cpu_clock(&mut self) {
+        let ptr = &mut self.cpu as *mut CPU;
+        unsafe {
+            (*ptr).clock(self);
         }
     }
 
@@ -356,7 +365,7 @@ impl Bus {
                             }
                             else{
                                 // request that CPU is paused until next interrupt
-                                self.cpu_halt_request = true; 
+                                self.cpu.halt();
                             }
                         },
         
@@ -367,6 +376,7 @@ impl Bus {
                             // current bit 1, incoming bit 0 -> result = 1
                             // current bit 0, incoming bit 1 -> result = 1
                             self.mem[addr] ^= val;
+                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
                             return;
                         },
 
@@ -377,15 +387,26 @@ impl Bus {
                             let channel_no = (addr - 0x040000bb) / 12;
                             //println!("addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                             let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0{
-                                //println!("enabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
-                                DMA_Channel::new_enabled(channel_no, self)
+                                let res = DMA_Channel::new_enabled(channel_no, self);
+                                //println!("enabled dma, bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}", addr, val, channel_no, res.dest_addr);
+                                res
                             }
                             else if val >> 7 == 0{
                                 //println!("disabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                                 DMA_Channel::new_disabled(channel_no)
                             }
                             else{
+                                //self.set_is_any_dma_active();
+                                //self.dma_channels[channel_no].clone()
+                                //return;
+                                let res = DMA_Channel::new_enabled(channel_no, self);
+                                if res.timing_mode != self.dma_channels[channel_no].timing_mode{
+                                    //println!("debug dma new: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, val, channel_no, res.dest_addr, res.src_addr, res.timing_mode as u32);
+                                    //println!("debug dma old: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, old_val, channel_no, self.dma_channels[channel_no].dest_addr, self.dma_channels[channel_no].src_addr, self.dma_channels[channel_no].timing_mode as u32);
+                                }
+                                //self.dma_channels[channel_no].timing_mode = res.timing_mode;
                                 return;
+                                //res
                             };
                             self.dma_channels[channel_no] = dma_channel;
                             self.set_is_any_dma_active();
@@ -440,6 +461,18 @@ impl Bus {
                             return;
                         }
 
+                        // special handling for wave sound channel (official name: DMG channel 3)
+                        0x4000075 => {
+                            self.mem[addr] = val;
+                            if (val >> 7) & 1 > 0 {
+                                let ptr = &mut self.apu as * mut APU;
+                                unsafe{
+                                    (*ptr).reset_wave_channel(self);
+                                };
+                            }
+                            return;
+                        }
+
                         // special handling for enabling sound channels 0 - 3
                         /*0x04000081 => {
                             // i: 1 is left, i: 0 is right
@@ -466,12 +499,12 @@ impl Bus {
                                     self.apu.direct_sound_timer[i] = Some((val as usize >> (2 + i * 4)) & 1);
                                 }
                                 self.apu.direct_sound_fifo[i].clear();
+                                self.apu.direct_sound_fifo_cur[i] = 0;
                             }
                         }
 
                         // special handling for direct sound FIFO insertions
-                        0x040000a0 | 0x040000a1 | 0x040000a2 | 0x040000a3 |
-                        0x040000a4 | 0x040000a5 | 0x040000a6 | 0x040000a7 => {
+                        /*0x040000a0..=0x040000a7 => {
                             let channel_num = (addr - 0x040000a0) >> 2;
                             if self.apu.direct_sound_fifo[channel_num].len() < 32 {
                                 self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
@@ -479,11 +512,29 @@ impl Bus {
                             else{
                                 //self.apu.direct_sound_fifo[channel_num].pop_back();
                                 //self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
-                                //println!("sound fifo: {}, attempt to add sample at 32 capacity", channel_num);
+                                println!("sound fifo: {}, attempt to add sample at 32 capacity", channel_num);
                             }
                             // do not write to mem directly
                             return;
+                        }*/
+
+                        // special handling for inserting into wave sound channel bank
+                        0x04000090..=0x0400009f => {
+                            let ind = addr - 0x04000090;
+                            let bank = (self.mem[0x04000070] >> 5) & !(self.mem[0x04000070] >> 6) & 1;
+                            self.apu.wave_bank[bank as usize][ind] = val;
+                            
+                            // do not write to mem directly
+                            return;
                         }
+
+                        // special handling for wave channel disable/enable
+                        0x04000070 => {
+                            if (val ^ self.mem[addr]) >> 7 > 0 {
+                                self.apu.wave_sweep_cnt = 0;
+                            }
+                        }
+
                         0x04000084 => {
                             if (val >> 7) & 1 == 0 {
                                 for i in 0x04000060..=0x04000081{
@@ -505,6 +556,9 @@ impl Bus {
                     CartridgeType::FLASH64 | CartridgeType::FLASH128 => {
                         self.internal_write_byte_flash(addr, val);
                     },
+                    CartridgeType::SRAM => {
+                        self.mem[addr] = val;
+                    }
                     _ => {},
                 }
             },
@@ -671,6 +725,7 @@ impl Bus {
         match addr >> 24 {
             0 | 1 => {
                 if addr >= 0x4000 {
+                    #[cfg(feature="debug_instr")]
                     println!("illegal memory address: {:#x}", addr);
                     (0, MemoryRegion::Illegal)
                 }
@@ -744,6 +799,7 @@ impl Bus {
                 (0x0e000000 + (addr & 0xffff), MemoryRegion::CartridgeSRAM)
             }
             _ => {
+                #[cfg(feature="debug_instr")]
                 println!("illegal memory access: > 0x10000000: {:#x}", addr);
                 (0, MemoryRegion::Illegal)
             },

@@ -113,6 +113,9 @@ pub struct PPU {
     disp_stat: u16,
 
     cpu_interrupt: u16,
+
+    frame_count: u32,
+    pub frame_count_render: u32,
 }
 
 impl PPU {
@@ -141,6 +144,9 @@ impl PPU {
             disp_stat: 0,
         
             cpu_interrupt: 0,
+
+            frame_count: 0,
+            frame_count_render: 1,
         }
     }
     /*
@@ -156,18 +162,21 @@ impl PPU {
         // only happens when transitioning to vblank
         if self.clock_cur == 0{
             self.clock_cur += self._clock(bus);
-        }
-
-        assert!(self.clock_cur > 0);
-        self.clock_cur -= 1;
-
-        if self.buffer_ready{
-            self.buffer_ready = false;
-            let mut res = ScreenBuffer::new();
-            mem::swap(&mut self.buffer, &mut res);
-            Some(res)
+            #[cfg(feature="debug_instr")]
+            assert!(self.clock_cur > 0);
+            self.clock_cur -= 1;
+            if self.buffer_ready{
+                self.buffer_ready = false;
+                let mut res = ScreenBuffer::new();
+                mem::swap(&mut self.buffer, &mut res);
+                Some(res)
+            }
+            else{
+                None
+            }
         }
         else{
+            self.clock_cur -= 1;
             None
         }
     }
@@ -190,9 +199,11 @@ impl PPU {
             }
         }
         else if !self.is_hblank {
-            self.process_scanline(bus);
-            for j in 0..240 {
-                self.buffer.write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
+            if self.frame_count == 0{
+                self.process_scanline(bus);
+                for j in 0..240 {
+                    self.buffer.write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
+                }
             }
             //println!("  scanline processed: {}", self.cur_line);
 
@@ -211,7 +222,13 @@ impl PPU {
             self.cur_line += 1;
 
             if self.cur_line == 160{
-                self.buffer_ready = true;
+                if self.frame_count == 0{
+                    self.buffer_ready = true;
+                }
+                self.frame_count += 1;
+                if self.frame_count >= self.frame_count_render {
+                    self.frame_count = 0;
+                }
                 1232
             }
             else{
@@ -236,9 +253,10 @@ impl PPU {
             self.disp_stat |= 0b010;
         }
         // vcount interrupt request
-        if self.cur_line as u16 == self.disp_stat >> 8{
+        if self.is_hblank && self.cur_line as u16 == (self.disp_stat >> 8){
             if (self.disp_stat >> 5) & 1 > 0{
                 self.cpu_interrupt |= 0b100;
+                //println!("vcount irq requested: {}, frame: {}", self.disp_stat >> 8, self.frame_count);
             }
             self.disp_stat |= 0b100;
         }
@@ -691,7 +709,10 @@ impl PPU {
             (0b10, 0b01) => (8,32),
             (0b10, 0b10) => (16,32),
             (0b10, 0b11) => (32,64),
-            _ => panic!("invalid sprite shape and/or size")
+            _ => {
+                println!("invalid sprite shape and/or size");
+                (8,8)
+            }
         }
     }
 

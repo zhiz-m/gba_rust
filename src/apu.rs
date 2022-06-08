@@ -64,6 +64,48 @@ impl StereoTuple {
     }
 }
 
+#[derive(Clone)]
+pub struct FifoQueue {
+    mem: Vec<i8>,
+    write_ind: usize,
+    read_ind: usize,
+    capacity: usize,
+}
+
+impl FifoQueue {
+    pub fn new() -> FifoQueue{
+        FifoQueue {
+            mem: vec![0;32],
+            write_ind: 0,
+            read_ind: 0,
+            capacity: 0,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.capacity
+    }
+    pub fn pop_front(&mut self) -> Option<i8> {
+        if self.capacity == 0{
+            return None;
+        }
+        let res = self.mem[self.read_ind];
+        self.read_ind = (self.read_ind + 1) & 31;
+        self.capacity -= 1;
+        Some(res)
+    }
+    pub fn push_back(&mut self, val: i8) {
+        self.mem[self.write_ind] = val;
+        self.write_ind = (self.write_ind + 1) & 31;
+        self.capacity += 1;
+    }
+    pub fn clear(&mut self){
+        self.write_ind = 0;
+        self.read_ind = 0;
+        self.capacity = 0;
+        self.mem.fill(0);
+    }
+}
+
 pub struct APU {
     //  ------- square sound channels
     square_length: [u32; 2],
@@ -76,8 +118,15 @@ pub struct APU {
 
     pub square_disable: [bool; 2],
 
+    // -------- wave sound channel
+    wave_length: u32,
+    wave_rate: u32,
+    pub wave_sweep_cnt: u32,
+    pub wave_bank: Vec<Vec<u8>>,
+
     // -------- direct sound (DMA) channels
-    pub direct_sound_fifo: Vec<VecDeque<i8>>,
+    pub direct_sound_fifo: Vec<FifoQueue>,
+    //pub direct_sound_fifo: Vec<VecDeque<i8>>,
     pub direct_sound_fifo_cur: [i8; 2],
     pub direct_sound_timer: [Option<usize>; 2],
 
@@ -114,7 +163,13 @@ impl APU {
 
             square_disable: [false; 2],
 
-            direct_sound_fifo: vec![VecDeque::<i8>::with_capacity(64); 2],
+            wave_length: 0,
+            wave_rate: 0,
+            wave_sweep_cnt: 0,
+            wave_bank: vec![vec![0; 16]; 2],
+
+            direct_sound_fifo: vec![FifoQueue::new(); 2],
+            //direct_sound_fifo: vec![VecDeque::<i8>::with_capacity(32); 2],
             direct_sound_fifo_cur: [0; 2],
             direct_sound_timer: [None; 2],
 
@@ -137,6 +192,7 @@ impl APU {
             // sound enabled
             let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
             //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
+            //println!("bias: {:#018b}", bus.read_halfword_raw(0x4000088));
             let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
             
             let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];
@@ -157,9 +213,9 @@ impl APU {
                 if i == 0{
                     let snd_sweep = bus.read_byte(0x04000060);
                     let sweep_cnt_hit = ((snd_sweep as u32 >> 4) & 0b111) << 17;
-                    if sweep_cnt_hit != 0{
+                    let sweep_num = snd_sweep & 0b111;
+                    if sweep_cnt_hit != 0 && sweep_num != 0{
                         if self.square_sweep_cnt[i] >= sweep_cnt_hit {
-                            let sweep_num = snd_sweep & 0b111;
                             let rate_delta = self.square_rate[i] >> sweep_num;
                             if (snd_sweep >> 3) & 1 > 0 {
                                 self.square_rate[i] -= rate_delta;
@@ -217,18 +273,21 @@ impl APU {
                         _ => unreachable!(),
                     } as i16;
                     if self.square_sweep_cnt[i] % period_clocks < active_clocks {
-                        cur_tuple.add(j, final_square_vol * dmg_vol[j]);
+                        //cur_tuple.add(j, final_square_vol * dmg_vol[j]);
                     }
                     else{
-                        cur_tuple.add(j, -final_square_vol * dmg_vol[j]);
+                        //cur_tuple.add(j, -final_square_vol * dmg_vol[j]);
                     }
                 }
 
                 self.square_sweep_cnt[i] += config::AUDIO_SAMPLE_CLOCKS;
                 if self.square_length[i] > 0 {
-                    self.square_length[i] -= 1;
+                    self.square_length[i] -= config::AUDIO_SAMPLE_CLOCKS;
                 }
             }
+
+            // wave channel
+            self.process_wave_channel(&mut cur_tuple, bus);
             
             // Direct Sound
             for i in 0..2 {
@@ -248,8 +307,10 @@ impl APU {
                     };
                     if final_sample as i16 != 0{
                         //println!("playing from direct sound: {:#x}, ds_cnt: {:#018b}, channel: {}, snd_bias: {:#018b}", final_sample, snd_ds_cnt, i, bus.read_halfword(0x04000088));
+                    }else{
+                        //println!("direct sound zero");
                     }
-                    cur_tuple.add(j, final_sample as i16);
+                    cur_tuple.add(j, (final_sample as i16) * 4);
                 }
             }
 
@@ -266,6 +327,9 @@ impl APU {
             // clip values into range [0, 0x3ff]
             cur_tuple.clip();
         }
+        //else{
+        //    println!("sound is off");
+        //}
 
         // output channel 0 is left not right
         self.sound_in_buff[1].push(match cur_tuple.0 {
@@ -291,15 +355,109 @@ impl APU {
         }
     }
 
+    fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &Bus) {
+        let snd_cur_cnt_l = bus.read_byte_raw(0x04000070);
+        if snd_cur_cnt_l >> 7 == 0 {
+            //println!("wave channel disabled");
+            return;
+        }
+
+        let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
+        let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];
+        //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
+        let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
+        let enable_right_left = [(snd_dmg_cnt >> 10) & 1 > 0, (snd_dmg_cnt >> 14) & 1 > 0];
+        // sound is not enabled on any channel (left or right)
+        if !enable_right_left[0] && !enable_right_left[1] {
+            return;
+        }
+        let snd_cur_freq = bus.read_halfword(0x04000074);
+
+        if (snd_cur_freq >> 0xe) & 1 > 0 && self.wave_length == 0 {
+            return;
+        }
+        let snd_cur_cnt_h = bus.read_halfword(0x04000072);
+        let bank = (snd_cur_cnt_l >> 5) & (snd_cur_cnt_l >> 6) & 1;
+
+        let period_clocks = (2048 - self.wave_rate) << 3;
+        let ind = self.wave_sweep_cnt / period_clocks;
+
+        let mut final_wave_vol = if true {
+            self.wave_bank[bank as usize][((ind & 31)>> 1) as usize] as i16
+        }
+        else{
+            //println!("wave bank is at its end, {:#010b}", snd_cur_cnt_l);
+            0
+        };
+
+        if ind & 1 > 0{
+            final_wave_vol &= 0b1111;
+        }
+        else{
+            final_wave_vol >>= 4;
+        }
+
+        // make signed. MAYBE UNDO: do not do this if audio is unsigned.
+        /*if (final_wave_vol >> 3) & 1 > 0 {
+            final_wave_vol |= !0b1111;
+        }*/
+
+        final_wave_vol = match snd_ds_cnt & 0b11 {
+            0b00 => final_wave_vol >> 2,
+            0b01 => final_wave_vol >> 1,
+            0b10 => final_wave_vol,
+            0b11 => panic!("sound channel 1-4 has a volume of 0b11: forbidden"),
+            _ => unreachable!(),
+        };
+
+        final_wave_vol = match snd_cur_cnt_h >> 15 {
+            0 => {
+                match (snd_cur_cnt_h >> 13) & 0b11 {
+                    0b00 => 0,
+                    0b01 => final_wave_vol,
+                    0b10 => final_wave_vol >> 1,
+                    0b11 => final_wave_vol >> 2,
+                    _ => unreachable!(),
+                }
+            },
+            1 => {
+                (final_wave_vol >> 2) * 3
+            },
+            _ => unreachable!(),
+        };
+
+        // sound channels 
+        for j in 0..2 {
+            if !enable_right_left[j]{
+                continue;
+            }
+            if final_wave_vol != 0 {
+                //println!("playing wave sample: {:#018b}", final_wave_vol * dmg_vol[j]);
+            }
+            cur_tuple.add(j, final_wave_vol * dmg_vol[j]);
+        }
+
+        self.wave_sweep_cnt += config::AUDIO_SAMPLE_CLOCKS;
+        if self.wave_length > 0 {
+            self.wave_length -= config::AUDIO_SAMPLE_CLOCKS;
+        }
+    }
+
     // reset envelope, rate and length
     // channel num must be 0 or 1
     pub fn reset_square_channel(&mut self, channel_num: usize, bus: &Bus) {
-        let snd_cur_cnt = bus.read_halfword(0x04000062 + channel_num * 6);
-        let snd_cur_freq = bus.read_halfword(0x04000064 + channel_num * 8);
+        let snd_cur_cnt = bus.read_halfword_raw(0x04000062 + channel_num * 6);
+        let snd_cur_freq = bus.read_halfword_raw(0x04000064 + channel_num * 8);
         self.square_envelope[channel_num] = snd_cur_cnt as u32 >> 0xc;
-        self.square_length[channel_num] = snd_cur_cnt as u32 & 0b111111;
+        self.square_length[channel_num] = (64 - (snd_cur_cnt as u32 & 0b111111)) << 16;
         self.square_rate[channel_num] = snd_cur_freq as u32 & 0b11111111111;
         self.square_sweep_cnt[channel_num] = 0;
         self.square_envelope_cnt[channel_num] = 0;
+    }
+
+    pub fn reset_wave_channel(&mut self, bus: &Bus) {
+        self.wave_length = (256 - bus.read_byte_raw(0x04000072) as u32) << 16;
+        self.wave_rate = bus.read_halfword_raw(0x04000074) as u32 & 0b11111111111;
+        self.wave_sweep_cnt = 0;
     }
 }

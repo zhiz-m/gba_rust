@@ -6,10 +6,10 @@ use crate::bus::CartridgeType;
 pub const CPU_EXECUTION_INTERVAL_CLOCKS: u32 = 280896;  
 
 // number of nanoseconds that should pass after every CPU_EXECUTION_INTERVAL_CLOCKS clocks. 
-pub const CPU_EXECUTION_INTERVAL_NS: u32 = 1000000000 / ( 16 * 1024 * 1024 / CPU_EXECUTION_INTERVAL_CLOCKS);
+pub const CPU_EXECUTION_INTERVAL_NS: u32 = (1000000000u64 * CPU_EXECUTION_INTERVAL_CLOCKS as u64 / ( 16 * 1024 * 1024)) as u32;
 
 // number of frames to pass before recording new FPS value
-pub const FPS_RECORD_INTERVAL: u32 = 60;
+pub const FPS_RECORD_INTERVAL: u32 = 120;
 
 pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::SRAM;
 
@@ -28,3 +28,8 @@ pub const AUDIO_SAMPLE_CLOCKS_POW2: u32 = 24 - AUDIO_SAMPLE_RATE_POW2;
 pub const AUDIO_SAMPLE_CLOCKS: u32 = 1 << AUDIO_SAMPLE_CLOCKS_POW2;
 
 pub const NUM_SAVE_STATES: usize = 5;
+pub const SAVE_FILE_DIR: &str = "/rustsav";
+pub const SAVE_FILE_SUF: &str = ".rustsav";
+
+// number of frames to pass before rendering in speedup mode
+pub const FRAME_RENDER_INTERVAL_SPEEDUP: u32 = 8;
