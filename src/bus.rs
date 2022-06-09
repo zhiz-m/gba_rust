@@ -396,17 +396,12 @@ impl Bus {
                                 DMA_Channel::new_disabled(channel_no)
                             }
                             else{
-                                //self.set_is_any_dma_active();
-                                //self.dma_channels[channel_no].clone()
-                                //return;
-                                let res = DMA_Channel::new_enabled(channel_no, self);
-                                if res.timing_mode != self.dma_channels[channel_no].timing_mode{
+                                //let res = DMA_Channel::new_enabled(channel_no, self);
+                                //if res.timing_mode != self.dma_channels[channel_no].timing_mode{
                                     //println!("debug dma new: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, val, channel_no, res.dest_addr, res.src_addr, res.timing_mode as u32);
                                     //println!("debug dma old: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, old_val, channel_no, self.dma_channels[channel_no].dest_addr, self.dma_channels[channel_no].src_addr, self.dma_channels[channel_no].timing_mode as u32);
-                                }
-                                //self.dma_channels[channel_no].timing_mode = res.timing_mode;
+                                //}
                                 return;
-                                //res
                             };
                             self.dma_channels[channel_no] = dma_channel;
                             self.set_is_any_dma_active();
@@ -504,7 +499,7 @@ impl Bus {
                         }
 
                         // special handling for direct sound FIFO insertions
-                        /*0x040000a0..=0x040000a7 => {
+                        0x040000a0..=0x040000a7 => {
                             let channel_num = (addr - 0x040000a0) >> 2;
                             if self.apu.direct_sound_fifo[channel_num].len() < 32 {
                                 self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
@@ -516,7 +511,7 @@ impl Bus {
                             }
                             // do not write to mem directly
                             return;
-                        }*/
+                        }
 
                         // special handling for inserting into wave sound channel bank
                         0x04000090..=0x0400009f => {
@@ -563,7 +558,7 @@ impl Bus {
                 }
             },
             MemoryRegion::Illegal => {
-
+                println!("illegal memory write");
             },
             _ => {
                 self.mem[addr] = val;

@@ -103,7 +103,23 @@ impl DMA_Channel {
                         TimingMode::Immediate => true,
                         TimingMode::HBlank => bus.hblank_dma,
                         TimingMode::VBlank => bus.vblank_dma,
-                        TimingMode::FIFO => bus.apu.direct_sound_fifo[(self.dest_addr - 0x040000a0) >> 2].len() <= 16,
+                        TimingMode::FIFO => {
+                            match self.channel_no{
+                                0 => panic!("FIFO channel is invalid for DMA channel_no of 0"),
+                                // sound FIFO mode
+                                1 | 2 => {
+                                    bus.apu.direct_sound_fifo[(self.dest_addr - 0x040000a0) >> 2].len() <= 16
+                                }
+                                // video transfer mode
+                                3 =>{
+                                    bus.hblank_dma && {
+                                        let vcount = bus.read_byte_raw(0x04000005);
+                                        vcount >= 2 && vcount < 162
+                                    }
+                                },
+                                _ => unreachable!(),
+                            }
+                        },
                     }
                 //}
             }
@@ -156,12 +172,13 @@ impl DMA_Channel {
         };
 
         if self.timing_mode != TimingMode::FIFO{
+            //println!("non-fifo dma dest_addr: {:#x}", self.dest_addr);
             self.chunk_size = match (dma_cnt >> 0x1a) & 1 > 0 {
                 true => ChunkSize::Word,
                 false => ChunkSize::Halfword,
             };
         }
-        else{
+        else if self.channel_no == 1 || self.channel_no == 2{
             assert!(self.chunk_size == ChunkSize::Word);
             assert!(self.num_transfers == 4);
             assert!(self.dest_addr == 0x040000a0 || self.dest_addr == 0x040000a4);
@@ -175,7 +192,7 @@ impl DMA_Channel {
         if self.channel_no != 1 && self.channel_no != 2 {
             //println!("dest: {:#x}, channel_no: {}", self.dest_addr, self.channel_no);
         }
-        if self.timing_mode != TimingMode::FIFO{
+        //if self.timing_mode != TimingMode::FIFO{
             for _ in 0..self.num_transfers{
                 //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
                 match self.chunk_size{
@@ -186,7 +203,7 @@ impl DMA_Channel {
                 self.src_addr += self.src_increment * self.chunk_size as usize;
                 self.dest_addr += self.dest_increment * self.chunk_size as usize;
             }
-        }
+        /*}
         else{
             let channel_num = (self.dest_addr- 0x040000a0) >> 2;
             for _ in 0..self.num_transfers{
@@ -203,7 +220,7 @@ impl DMA_Channel {
                 bus.apu.direct_sound_fifo[channel_num].push_back(((word >> 24) & 0b11111111) as i8);
                 self.src_addr += self.src_increment * self.chunk_size as usize;
             }
-        }
+        }*/
 
         // if not repeating, set inactive and clear the associated bit in memory
         if !self.is_repeating {

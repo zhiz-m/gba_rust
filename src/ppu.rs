@@ -253,7 +253,7 @@ impl PPU {
             self.disp_stat |= 0b010;
         }
         // vcount interrupt request
-        if self.is_hblank && self.cur_line as u16 == (self.disp_stat >> 8){
+        if !self.is_hblank && self.cur_line as u16 == (self.disp_stat >> 8){
             if (self.disp_stat >> 5) & 1 > 0{
                 self.cpu_interrupt |= 0b100;
                 //println!("vcount irq requested: {}, frame: {}", self.disp_stat >> 8, self.frame_count);
@@ -312,7 +312,9 @@ impl PPU {
                 }
 
                 // process sprites
+                //if self.cur_window != WindowType::W_obj{
                 self.process_sprites(false, bus);
+                //}
             }
         }
 
@@ -328,6 +330,7 @@ impl PPU {
 
         for i in 0..240 {
             let (pixel1, mut pixel_type1, win)  = self.cur_scanline_front[i];
+            
             let cur_bm = if pixel_type1 == PixelType::Sprite_blend {
                 pixel_type1 = PixelType::Sprite;
                 0b01
@@ -681,6 +684,9 @@ impl PPU {
                     //}
                     tx &= 0b111111111;
                     if tx < 240 {
+                        if gfx == 0b10 && !process_win_obj{
+                            continue;
+                        }
                         if !process_win_obj{
                             self.update_cur_scanline_sprite(tx, pixel, gfx == 1);
                         }
@@ -691,7 +697,6 @@ impl PPU {
                 }
             }
         }
-        
     }
 
     // returns width, height in terms of pixels
