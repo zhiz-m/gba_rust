@@ -15,8 +15,10 @@ rubato = "0.12.0"
 clap = { version = "3.1.18", features = ["derive"] }
 
 [features]
+default = ["binary_heap_loop"]
 debug_instr = []
 print_cps = []
+binary_heap_loop = []
 
 [profile.dev]
 overflow-checks = false

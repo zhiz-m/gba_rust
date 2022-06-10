@@ -156,7 +156,8 @@ impl PPU {
         self.cpu_interrupt = 0;
         res
     }*/
-
+    
+    #[cfg(not(feature="binary_heap_loop"))]
     pub fn clock(&mut self, bus: &mut Bus) -> Option<ScreenBuffer> {
         // may clock more than once per call to this function
         // only happens when transitioning to vblank
@@ -180,6 +181,22 @@ impl PPU {
             None
         }
     }
+    #[cfg(feature="binary_heap_loop")]
+    pub fn clock(&mut self, bus: &mut Bus) -> (u32, Option<ScreenBuffer>){
+        let clocks = self._clock(bus);
+        //#[cfg(feature="debug_instr")]
+        assert!(clocks > 0);
+        if self.buffer_ready{
+            self.buffer_ready = false;
+            let mut res = ScreenBuffer::new();
+            mem::swap(&mut self.buffer, &mut res);
+            (clocks, Some(res))
+        }
+        else{
+            (clocks, None)
+        }
+    }
+
 
     fn _clock(&mut self, bus: &mut Bus) -> u32 {
         self.disp_cnt = bus.read_halfword_raw(0x04000000);
@@ -547,7 +564,10 @@ impl PPU {
             (0b01, true) => (256, 256),
             (0b10, true) => (512, 512),
             (0b11, true) => (1024, 1024),
-            _ => panic!("invalid sz_flag for tiled bg dimensions")
+            _ => {
+                println!("invalid sz_flag for tiled bg dimensions: {}, {}", sz_flag, is_affine);
+                (256, 256)
+            }
         }
     }
 

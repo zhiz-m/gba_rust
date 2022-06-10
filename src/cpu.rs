@@ -24,7 +24,8 @@ enum OperatingMode{
     Und = 6
 }
 
-enum Flag{
+#[derive(PartialEq)]
+pub enum Flag{
     N = 31,
     Z = 30,
     C = 29,
@@ -118,7 +119,7 @@ impl CPU{
     }
 
     // ---------- main loop (clock)
-
+    #[cfg(not(feature="binary_heap_loop"))]
     pub fn clock(&mut self, bus: &mut Bus) {
         if self.clock_cur == 0 {
             #[cfg(feature="debug_instr")]
@@ -135,19 +136,18 @@ impl CPU{
 
             self.clock_cur += 
             
-            if self.check_dma(bus){
-                self.execute_dma(bus)
-            }
-            else if self.check_interrupt(bus){
+            if !self.read_flag(Flag::I) && self.interrupt_requested{
                 self.halt = false;
                 //self.bus_set_reg_if(bus);
                 //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
                 //self.debug = true;
                 self.execute_hardware_interrupt()
             }
-            
+            else if self.check_dma(bus){
+                self.execute_dma(bus)
+            }
             else if self.halt {
-                1 // consume clock cycles; do nothing
+                32 // consume clock cycles; do nothing
             }
             else{
                 match self.read_flag(Flag::T) {
@@ -161,6 +161,54 @@ impl CPU{
         #[cfg(feature="debug_instr")]
         assert!(self.clock_cur > 0);
         self.clock_cur -= 1;
+    }
+
+    #[cfg(feature="binary_heap_loop")]
+    pub fn clock(&mut self, bus: &mut Bus) -> u32 {
+        //use std::iter::repeat;
+
+        use crate::config;
+
+        #[cfg(feature="debug_instr")]
+        if self.actual_pc >= 0x8000000{
+            self.bios_end = true;
+        }
+        // check for halting (pause cpu)
+        /*if bus.check_cpu_halt_request() {
+            self.halt();
+        }*/
+
+        //self.debug(&format!("halting: {}\n", self.halt));
+        //self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
+
+        let clocks = 
+        //repeat(
+        if !self.read_flag(Flag::I) && self.interrupt_requested{
+                self.halt = false;
+                //self.bus_set_reg_if(bus);
+                //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
+                //self.debug = true;
+                self.execute_hardware_interrupt()
+            }
+            else if self.check_dma(bus){
+                self.execute_dma(bus)
+            }
+            else if self.halt {
+                config::CPU_HALT_SLEEP_CYCLES // consume clock cycles; do nothing
+            }
+            else{
+                match self.read_flag(Flag::T) {
+                    false => self.decode_execute_instruction_arm(bus),
+                    true => self.decode_execute_instruction_thumb(bus)
+                }
+            }
+        //).take(config::CPU_ITERATIONS_PER_SIMULATION).sum()
+        ;
+        //self.interrupt = 0;
+        
+        //#[cfg(feature="debug_instr")]
+        assert!(clocks > 0);
+        clocks
     }
 
       // -------------- ARM INSTRUCTIONS -----------------
@@ -579,7 +627,7 @@ impl CPU{
                     self.set_cpsr(spsr);
                 }
                 else{
-                    panic!("s bit should not be set");
+                    println!("s bit should not be set");
                 }
             }
         }
@@ -619,7 +667,8 @@ impl CPU{
             match self.spsr_map.get(&self.op_mode){
                 Some(&opmode) => opmode,
                 None => {
-                    panic!("msr called on R=1, but this mode has no SPSR")
+                    println!("msr called on R=1, but this mode has no SPSR");
+                    Register::CPSR
                 },
             }
         };
@@ -805,7 +854,6 @@ impl CPU{
             self.debug_cnt += 2;
             self.print_pc(bus);
             self.debug(&format!(" reg: {}, base_reg: {}, L: {}, B: {}, W: {}, P: {}, addr: {:x}, offset: {:x}, offset_addr: {:x}", reg, base_reg, L, B, (self.instr >> 21) & 1 == 1, (self.instr >> 24) & 1 == 1, addr, offset, offset_addr));
-            panic!()
         }*/
 
         // W flag
@@ -950,7 +998,7 @@ impl CPU{
                 self.set_reg(reg, res);
             },
             _ => {
-                panic!("Error undefined combination in execute_halfword_signed_transfer with instr {:#034b} at pc {}\n", self.instr, self.actual_pc);
+                println!("Error undefined combination in execute_halfword_signed_transfer with instr {:#034b} at pc {}\n", self.instr, self.actual_pc);
             }
         };
 
@@ -1111,7 +1159,10 @@ impl CPU{
             0b1100 => !self.read_flag(Flag::Z) && (self.read_flag(Flag::N) == self.read_flag(Flag::V)),
             0b1101 => self.read_flag(Flag::Z) || (self.read_flag(Flag::N) != self.read_flag(Flag::V)),
             0b1110 => true,
-            _ => panic!("cond field not valid: instr: {:#034b}, pc: {:#x}", self.instr, self.actual_pc)
+            _ => {
+                println!("cond field not valid: instr: {:#034b}, pc: {:#x}", self.instr, self.actual_pc);
+                false
+            }
         }
     }
 
@@ -2138,7 +2189,7 @@ impl CPU{
     }
     
     pub fn check_interrupt(&self, bus: &Bus) -> bool {
-        !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
+        //!self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
         bus.read_byte_raw(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
         bus.read_halfword_raw(0x04000202) & bus.read_halfword_raw(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
     }
@@ -2290,7 +2341,7 @@ impl CPU{
     }*/
 
     #[inline(always)]
-    fn read_flag(&self, f: Flag) -> bool {
+    pub fn read_flag(&self, f: Flag) -> bool {
         let s = f as u32;
         (self.reg[Register::CPSR as usize] >> s) & 1 > 0
     }
@@ -2329,7 +2380,8 @@ impl CPU{
             0b11011 => OperatingMode::Und,
             0b11111 => OperatingMode::Sys,
             _ => {
-                panic!("invalid op mode: {}, instr: {:#034b}, pc: {:#x}", val, self.instr, self.actual_pc);
+                println!("invalid op mode: {}, instr: {:#034b}, pc: {:#x}", val, self.instr, self.actual_pc);
+                OperatingMode::Sys
             },
         };
     }

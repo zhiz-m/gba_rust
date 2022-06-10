@@ -36,7 +36,8 @@ pub struct Frontend{
     audio_receiver: Option<Receiver<(f32, f32)>>,
 
     fps_receiver: Receiver<f64>,
-    //cur_fps: f64,
+    cur_fps: f64,
+    avg_fps: f64,
 }
 
 impl Frontend{
@@ -82,7 +83,8 @@ impl Frontend{
             audio_receiver: Some(audio_receiver),
 
             fps_receiver,
-            //cur_fps: 0.,
+            cur_fps: 60f64,
+            avg_fps: 60f64,
         }
     }
 
@@ -143,7 +145,9 @@ impl Frontend{
                 self.last_screenbuf = buf;
             }
             while let Ok(fps) = self.fps_receiver.try_recv() {
-                self.window.as_ref().unwrap().ctx.window().set_title(&format!("{}: FPS {:.3}", self.title, fps));
+                self.cur_fps = fps;
+                self.avg_fps = self.avg_fps * 0.8 + 0.2 * self.cur_fps;
+                self.window.as_ref().unwrap().ctx.window().set_title(&format!("{} | FPS ({:5.3},{:5.3})", self.title, self.cur_fps, self.avg_fps));
             }
             if let Some(args) = e.render_args(){
                 let square = rectangle::square(0.0, 0.0, 2.);

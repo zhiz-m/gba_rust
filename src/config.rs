@@ -33,3 +33,17 @@ pub const SAVE_FILE_SUF: &str = ".rustsav";
 
 // number of frames to pass before rendering in speedup mode
 pub const FRAME_RENDER_INTERVAL_SPEEDUP: u32 = 8;
+
+pub const TIMER_CLOCK_INTERVAL_POW2: u32 = 7;
+pub const TIMER_CLOCK_INTERVAL_CLOCKS: u32 = 1 << TIMER_CLOCK_INTERVAL_POW2;
+
+/*#[cfg(feature="fast_cpu")]
+// WARNING: UNSTABLE
+pub const CPU_ITERATIONS_PER_SIMULATION: usize = 1;
+
+#[cfg(not(feature="fast_cpu"))]
+pub const CPU_ITERATIONS_PER_SIMULATION: usize = 1;*/
+
+// lower is more accurate, higher allows faster emulation. 
+pub const CPU_HALT_SLEEP_CYCLES: u32 = 32;
+

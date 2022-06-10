@@ -105,7 +105,10 @@ impl DMA_Channel {
                         TimingMode::VBlank => bus.vblank_dma,
                         TimingMode::FIFO => {
                             match self.channel_no{
-                                0 => panic!("FIFO channel is invalid for DMA channel_no of 0"),
+                                0 => {
+                                    println!("FIFO channel is invalid for DMA channel_no of 0");
+                                    false
+                                },
                                 // sound FIFO mode
                                 1 | 2 => {
                                     bus.apu.direct_sound_fifo[(self.dest_addr - 0x040000a0) >> 2].len() <= 16
@@ -167,7 +170,10 @@ impl DMA_Channel {
             0b00 => 1,
             0b01 => !0, // -1
             0b10 => 0,
-            0b11 => panic!("illegal DMA channel src_increment of 0b11"),
+            0b11 => {
+                println!("illegal DMA channel src_increment of 0b11");
+                0
+            },
             _ => unreachable!(),
         };
 
@@ -198,7 +204,9 @@ impl DMA_Channel {
                 match self.chunk_size{
                     ChunkSize::Halfword => bus.store_halfword(self.dest_addr, bus.read_halfword(self.src_addr)),
                     ChunkSize::Word => bus.store_word(self.dest_addr, bus.read_word(self.src_addr)),
-                    _ => panic!("DMA chunk size must be Word or Halfword")
+                    _ => {
+                        println!("DMA chunk size must be Word or Halfword");
+                    }
                 };
                 self.src_addr += self.src_increment * self.chunk_size as usize;
                 self.dest_addr += self.dest_increment * self.chunk_size as usize;

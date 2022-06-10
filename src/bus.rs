@@ -62,7 +62,7 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
                 1 | 2 => CartridgeType::FLASH64,
                 3 => CartridgeType::FLASH128,
                 4 => CartridgeType::EEPROM,
-                _ => panic!("logical error, invalid result from u8_search"),
+                _ => unreachable!("logical error, invalid result from u8_search"),
             }
         }
     }
@@ -121,7 +121,7 @@ impl Bus {
                     "FLASH512" => CartridgeType::FLASH64,
                     "FLASH1M" => CartridgeType::FLASH128,
                     "EEPROM" => CartridgeType::FLASH128,
-                    _ => panic!()
+                    _ => unreachable!()
                 }
             }
         };
@@ -278,10 +278,19 @@ impl Bus {
         }
     }
 
+    #[cfg(not(feature="binary_heap_loop"))]
     pub fn cpu_clock(&mut self) {
         let ptr = &mut self.cpu as *mut CPU;
         unsafe {
             (*ptr).clock(self);
+        }
+    }
+
+    #[cfg(feature="binary_heap_loop")]
+    pub fn cpu_clock(&mut self) -> u32 {
+        let ptr = &mut self.cpu as *mut CPU;
+        unsafe {
+            (*ptr).clock(self)
         }
     }
 
@@ -343,8 +352,11 @@ impl Bus {
                 match self.cartridge_type {
                     CartridgeType::SRAM => self.mem[addr],
                     CartridgeType::FLASH64 | CartridgeType::FLASH128 => self.internal_read_byte_flash(addr),
-                    _ => panic!("writing to SRAM is forbidden for cartridge type {}", self.cartridge_type as u32)
-                }
+                    _ => {
+                        println!("reading from SRAM is forbidden for cartridge type {}", self.cartridge_type as u32);
+                        0
+                    }
+                }   
                 
             },
             MemoryRegion::Illegal => {
@@ -368,6 +380,10 @@ impl Bus {
                                 self.cpu.halt();
                             }
                         },
+
+                        0x04000208 => {
+                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+                        }
         
                         // special handling for REG_IF, interrupt handling
                         0x04000202 | 0x04000203 => {
@@ -431,7 +447,7 @@ impl Bus {
                             let timer_no = (addr - 0x4000102) >> 2;
                             unsafe{
                                 let ptr = &mut self.timers[timer_no] as *mut Timer;
-                                (*ptr).set_frequency(val & 0b11);
+                                (*ptr).set_period(val & 0b11);
                                 (*ptr).is_cascading = (val >> 2) & 1 > 0;
                                 (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
                                 (*ptr).set_is_enabled((val >> 7) & 1 > 0);
@@ -554,11 +570,13 @@ impl Bus {
                     CartridgeType::SRAM => {
                         self.mem[addr] = val;
                     }
-                    _ => {},
+                    _ => {
+                        println!("writing to SRAM is forbidden for cartridge type {}", self.cartridge_type as u32);
+                    },
                 }
             },
             MemoryRegion::Illegal => {
-                println!("illegal memory write");
+                //println!("illegal memory write");
             },
             _ => {
                 self.mem[addr] = val;
@@ -580,16 +598,18 @@ impl Bus {
                     CartridgeType::FLASH128 => {
                         (0x09, 0xc2) // Macronix 128kb
                     },
-                    _ => panic!("cartridge type is not flash")
+                    _ => unreachable!("cartridge type is not flash")
                 };
                 match addr {
                     0xe000000 => man,
                     0xe000001 => device,
-                    _ => panic!("invalid addr for read in device/manufacturer mode"),
+                    _ => {
+                        println!("invalid addr for read in device/manufacturer mode");
+                        0
+                    },
                 }
             },
             _ => {
-                //panic!("invalid cartridge type state for read: {}", self.cartridge_type_state[4])
                 match self.cartridge_type{
                     CartridgeType::FLASH64 => {
                         self.mem[config::FLASH64_MEM_START + (addr & 0xffff)]
@@ -597,7 +617,7 @@ impl Bus {
                     CartridgeType::FLASH128 => {
                         self.mem[config::FLASH128_MEM_START + (addr & 0xffff) + ((self.cartridge_type_state[3] as usize) << 16)]
                     },
-                    _ => panic!("cartridge type is not flash")
+                    _ => unreachable!("cartridge type is not flash")
                 }
             }
         }
@@ -614,7 +634,7 @@ impl Bus {
                     CartridgeType::FLASH128 => {
                         self.mem[config::FLASH128_MEM_START + (addr & 0xffff) + ((self.cartridge_type_state[3] as usize) << 16)] = val;
                     },
-                    _ => panic!("cartridge type is not flash")
+                    _ => unreachable!("cartridge type is not flash")
                 }
                 self.cartridge_type_state[4] = 0;
             },
@@ -646,7 +666,7 @@ impl Bus {
                                     CartridgeType::FLASH128 => {
                                         config::FLASH128_MEM_START + (addr & 0xffff) + ((self.cartridge_type_state[3] as usize) << 16)
                                     },
-                                    _ => panic!("cartridge type is not flash")
+                                    _ => unreachable!("cartridge type is not flash")
                                 };
                                 for i in addr..addr+0x1000{
                                     self.mem[i] = 0xff;
@@ -666,7 +686,7 @@ impl Bus {
                                 self.cartridge_type_state[4] = 0;
                             }
                         }
-                        _ => panic!("invalid cartridge type state for write: {}", self.cartridge_type_state[4])
+                        _ => println!("invalid cartridge type state for write: {}", self.cartridge_type_state[4])
                     }
                 }
             }
@@ -692,7 +712,7 @@ impl Bus {
                     match self.cartridge_type{
                         CartridgeType::FLASH64 => (config::FLASH64_MEM_START, config::FLASH64_MEM_END),
                         CartridgeType::FLASH128 => (config::FLASH128_MEM_START, config::FLASH128_MEM_END),
-                        _ => panic!("logical error: execute_flash_storage_command is caled, but cartridge type is not FLASH64 or FLASH128"),
+                        _ => unreachable!("logical error: execute_flash_storage_command is caled, but cartridge type is not FLASH64 or FLASH128"),
                     };
                     for i in start..end {
                         self.mem[i] = 0xff;

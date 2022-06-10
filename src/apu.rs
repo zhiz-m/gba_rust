@@ -269,7 +269,10 @@ impl APU {
                         0b00 => self.square_envelope[i] >> 2,
                         0b01 => self.square_envelope[i] >> 1,
                         0b10 => self.square_envelope[i],
-                        0b11 => panic!("sound channel 1-4 has a volume of 0b11: forbidden"),
+                        0b11 => {
+                            println!("sound channel 1-4 has a volume of 0b11: forbidden");
+                            self.square_envelope[i]
+                        },
                         _ => unreachable!(),
                     } as i16;
                     if self.square_sweep_cnt[i] % period_clocks < active_clocks {
@@ -406,7 +409,10 @@ impl APU {
             0b00 => final_wave_vol >> 2,
             0b01 => final_wave_vol >> 1,
             0b10 => final_wave_vol,
-            0b11 => panic!("sound channel 1-4 has a volume of 0b11: forbidden"),
+            0b11 => {
+                println!("sound channel 1-4 has a volume of 0b11: forbidden");
+                final_wave_vol
+            },
             _ => unreachable!(),
         };
 
