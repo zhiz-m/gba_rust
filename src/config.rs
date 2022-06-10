@@ -15,11 +15,11 @@ pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::SRAM;
 
 // note: the below memory addresses cannot be accessed by the user. 
 
-pub const FLASH64_MEM_START: usize = 0x0e000000;
-pub const FLASH64_MEM_END: usize = 0x0e010000;
+pub const FLASH64_MEM_START: usize = 0x0;
+pub const FLASH64_MEM_END: usize = 0x10000;
 
-pub const FLASH128_MEM_START: usize = 0x0e000000;
-pub const FLASH128_MEM_END: usize = 0x0e020000;
+pub const FLASH128_MEM_START: usize = 0x0;
+pub const FLASH128_MEM_END: usize = 0x20000;
 
 // 15 = sample rate of 32768
 pub const AUDIO_SAMPLE_RATE_POW2: u32 = 16;

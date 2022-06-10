@@ -2,7 +2,7 @@
 use std::{sync::mpsc::Sender, collections::VecDeque};
 
 use crate::{
-    bus::Bus,
+    bus::{Bus, MemoryRegion},
     config
 };
 use rubato::{Resampler, FftFixedInOut, InterpolationParameters, InterpolationType, SincFixedIn};
@@ -187,13 +187,13 @@ impl APU {
         self.square_disable[0] = false;
         self.square_disable[1] = false;
         let mut cur_tuple = StereoTuple::new();
-        let snd_stat = bus.read_byte_raw(0x04000084);
+        let snd_stat = bus.read_byte_raw(0x84, MemoryRegion::IO);
         if (snd_stat >> 7) & 1 > 0{
             // sound enabled
-            let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
+            let snd_dmg_cnt = bus.read_halfword_raw(0x80, MemoryRegion::IO);
             //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
             //println!("bias: {:#018b}", bus.read_halfword_raw(0x4000088));
-            let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
+            let snd_ds_cnt = bus.read_halfword_raw(0x82, MemoryRegion::IO);
             
             let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];
 
@@ -322,7 +322,7 @@ impl APU {
             //cur_tuple.multiply(1, (snd_dmg_cnt >> 4) as i16 & 0b111);
 
             // process bias
-            let snd_bias = bus.read_word_raw(0x04000088);
+            let snd_bias = bus.read_word_raw(0x88, MemoryRegion::IO);
             let bias = (snd_bias >> 0) & 0b1111111111;
             cur_tuple.add_bias(0, bias as i16);
             cur_tuple.add_bias(1, bias as i16);
@@ -359,16 +359,16 @@ impl APU {
     }
 
     fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &Bus) {
-        let snd_cur_cnt_l = bus.read_byte_raw(0x04000070);
+        let snd_cur_cnt_l = bus.read_byte_raw(0x70, MemoryRegion::IO);
         if snd_cur_cnt_l >> 7 == 0 {
             //println!("wave channel disabled");
             return;
         }
 
-        let snd_dmg_cnt = bus.read_halfword_raw(0x04000080);
+        let snd_dmg_cnt = bus.read_halfword_raw(0x80, MemoryRegion::IO);
         let dmg_vol = [snd_dmg_cnt as i16 & 0b111, (snd_dmg_cnt >> 4) as i16 & 0b111];
         //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
-        let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
+        let snd_ds_cnt = bus.read_halfword_raw(0x82, MemoryRegion::IO);
         let enable_right_left = [(snd_dmg_cnt >> 10) & 1 > 0, (snd_dmg_cnt >> 14) & 1 > 0];
         // sound is not enabled on any channel (left or right)
         if !enable_right_left[0] && !enable_right_left[1] {
@@ -452,8 +452,8 @@ impl APU {
     // reset envelope, rate and length
     // channel num must be 0 or 1
     pub fn reset_square_channel(&mut self, channel_num: usize, bus: &Bus) {
-        let snd_cur_cnt = bus.read_halfword_raw(0x04000062 + channel_num * 6);
-        let snd_cur_freq = bus.read_halfword_raw(0x04000064 + channel_num * 8);
+        let snd_cur_cnt = bus.read_halfword_raw(0x62 + channel_num * 6, MemoryRegion::IO);
+        let snd_cur_freq = bus.read_halfword_raw(0x64 + channel_num * 8, MemoryRegion::IO);
         self.square_envelope[channel_num] = snd_cur_cnt as u32 >> 0xc;
         self.square_length[channel_num] = (64 - (snd_cur_cnt as u32 & 0b111111)) << 16;
         self.square_rate[channel_num] = snd_cur_freq as u32 & 0b11111111111;
@@ -462,8 +462,8 @@ impl APU {
     }
 
     pub fn reset_wave_channel(&mut self, bus: &Bus) {
-        self.wave_length = (256 - bus.read_byte_raw(0x04000072) as u32) << 16;
-        self.wave_rate = bus.read_halfword_raw(0x04000074) as u32 & 0b11111111111;
+        self.wave_length = (256 - bus.read_byte_raw(0x72, MemoryRegion::IO) as u32) << 16;
+        self.wave_rate = bus.read_halfword_raw(0x74, MemoryRegion::IO) as u32 & 0b11111111111;
         self.wave_sweep_cnt = 0;
     }
 }

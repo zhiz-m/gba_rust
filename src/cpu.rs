@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 
 use std::{collections::HashMap, cmp::min, num::Wrapping};
-use crate::{bus::Bus, dma_channel::DMA_Channel};
+use crate::{bus::{Bus, MemoryRegion}, dma_channel::DMA_Channel};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register{
@@ -2190,8 +2190,8 @@ impl CPU{
     
     pub fn check_interrupt(&self, bus: &Bus) -> bool {
         //!self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_byte_raw(0x04000208) & 1 == 1 && // check that IME interrupt is turned on
-        bus.read_halfword_raw(0x04000202) & bus.read_halfword_raw(0x04000200) > 0 // check that an interrupt for an active interrupt type has been requested
+        bus.read_byte_raw(0x208, MemoryRegion::IO) & 1 == 1 && // check that IME interrupt is turned on
+        bus.read_halfword_raw(0x202, MemoryRegion::IO) & bus.read_halfword_raw(0x200, MemoryRegion::IO) > 0 // check that an interrupt for an active interrupt type has been requested
     }
 
     // Mode: SVC (supervisor) for software interrupt
