@@ -301,7 +301,7 @@ impl Bus {
     }
 
     pub fn export_sram(&self, buff: &mut [u8]) {
-        buff.copy_from_slice(&self.mapped_mem[MemoryRegion::CartridgeSRAM as usize][0x0e000000..0x0e020000]);
+        buff.copy_from_slice(&self.mapped_mem[MemoryRegion::CartridgeSRAM as usize][..]);
     }
 
     // -------- helper functions
@@ -823,24 +823,4 @@ impl Bus {
             },
         }
     }
-
-    /*fn update_direct_sound_timer_num(&mut self) {
-        let snd_stat = self.read_byte_raw(0x04000084);
-        if (snd_stat >> 7) & 1 == 0{
-            self.timers[0].set_direct_sound_channel(None);
-            self.timers[1].set_direct_sound_channel(None);
-        }
-        else{
-            let snd_ds_cnt = self.read_halfword_raw(0x04000082);
-            for i in 0..2 {
-                let enable_right_left = [(snd_ds_cnt >> (8 + 4 * i)) & 1 > 0, (snd_ds_cnt >> (9 + 4 * i)) & 1 > 0];
-                if !enable_right_left[0] && !enable_right_left[1] {
-                    self.timers[i].set_direct_sound_channel(None);
-                }
-                else{
-                    self.timers[i].set_direct_sound_channel(Some((snd_ds_cnt as usize >> (10 + i * 4)) & 1));
-                }
-            }
-        }
-    }*/
 }
