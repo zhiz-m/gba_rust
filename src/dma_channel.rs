@@ -202,8 +202,14 @@ impl DMA_Channel {
             for _ in 0..self.num_transfers{
                 //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
                 match self.chunk_size{
-                    ChunkSize::Halfword => bus.store_halfword(self.dest_addr, bus.read_halfword(self.src_addr)),
-                    ChunkSize::Word => bus.store_word(self.dest_addr, bus.read_word(self.src_addr)),
+                    ChunkSize::Halfword => {
+                        let data = bus.read_halfword(self.src_addr);
+                        bus.store_halfword(self.dest_addr, data);
+                    },
+                    ChunkSize::Word => {
+                        let data = bus.read_word(self.src_addr);
+                        bus.store_word(self.dest_addr, data);
+                    },
                     _ => {
                         println!("DMA chunk size must be Word or Halfword");
                     }

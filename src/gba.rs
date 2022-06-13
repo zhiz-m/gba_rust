@@ -296,6 +296,8 @@ impl GBA {
                         self.bus.cpu.debug_cnt += 50;
                     }
 
+                    
+
                     // roughly every second in real-time, we want to normalize all the values in the heap
                     if cur.0 >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60{
                         let mut items = vec![];

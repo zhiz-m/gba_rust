@@ -1,7 +1,7 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-use std::{collections::HashMap, cmp::min, num::Wrapping};
+use std::{collections::{HashMap, VecDeque}, cmp::min, num::Wrapping};
 use crate::{bus::{Bus, MemoryRegion}, dma_channel::DMA_Channel};
 
 #[derive(Copy, Clone, PartialEq)]
@@ -63,6 +63,11 @@ pub struct CPU{
     pub debug_cnt: u32,
     #[cfg(feature="debug_instr")]
     bios_end: bool,
+
+    instr_debug_deque: VecDeque<String>,
+    instr_debug_deque_cnt: usize,
+
+    pub last_fetched_bios_instr: u32,
 }
 
 impl CPU{
@@ -109,6 +114,11 @@ impl CPU{
             debug_cnt: 0,
             #[cfg(feature="debug_instr")]
             bios_end: false,
+
+            instr_debug_deque: VecDeque::<String>::with_capacity(1000),
+            instr_debug_deque_cnt: 0,
+
+            last_fetched_bios_instr: 0,
         };
         //res.set_reg(13, 0x03007F00);
         //res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
@@ -197,16 +207,36 @@ impl CPU{
                 config::CPU_HALT_SLEEP_CYCLES // consume clock cycles; do nothing
             }
             else{
-                match self.read_flag(Flag::T) {
+                let res = match self.read_flag(Flag::T) {
                     false => self.decode_execute_instruction_arm(bus),
                     true => self.decode_execute_instruction_thumb(bus)
-                }
+                };
+                /*if self.instr_debug_deque_cnt > 0 {
+                    self.instr_debug_deque_cnt -= 1;
+                    println!("{:#010x} {:#010x} {:#010x} {:#10x}",self.instr,self.actual_pc,self.reg[12],self.reg[Register::CPSR as usize]);
+                }*/
+                /*if self.instr != 0 {
+                    if self.instr_debug_deque.len() == 100{
+                        self.instr_debug_deque.pop_front();
+                    }
+                    //self.instr_debug_deque.push_back(format!("{:#010x} {:#010x} {:#010x} {:#10x}",self.instr,self.actual_pc,self.reg[12],self.reg[Register::CPSR as usize]));
+                    self.instr_debug_deque.push_back(format!("{:#010x} {:#010x}",self.instr,self.actual_pc));
+                }*/
+                /*if self.actual_pc >= 0xa000000{
+                    println!("");
+                    for x in self.instr_debug_deque.iter(){
+                        println!("{}",x);
+                    }
+                    panic!();
+                }*/
+                res
             }
         //).take(config::CPU_ITERATIONS_PER_SIMULATION).sum()
         ;
         //self.interrupt = 0;
         
         //#[cfg(feature="debug_instr")]
+        //
         assert!(clocks > 0);
         clocks
     }
@@ -216,8 +246,11 @@ impl CPU{
     // completes one instruction. Returns number of clock cycles
     fn decode_execute_instruction_arm(&mut self, bus: &mut Bus) -> u32 {
         // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
-        let aligned_pc = self.actual_pc & !0b11;
-        self.instr = bus.read_word(aligned_pc as usize);
+        self.actual_pc = self.actual_pc & !0b11;
+        self.instr = bus.read_word(self.actual_pc as usize);
+        if self.actual_pc < 0x4000{
+            self.last_fetched_bios_instr = bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::BIOS) as u32;
+        }
         self.set_pc(self.actual_pc + 8);
 
         //if self.actual_pc == 0x80002f0  {
@@ -446,6 +479,13 @@ impl CPU{
             self.set_flag(Flag::C, self.operand1 > res || self.operand2 > res);
             self.set_flag(Flag::V, (self.operand1 >> 31 == self.operand2 >> 31) && res >> 31 != self.operand1 >> 31);
         }
+        if self.reg_dest == 0b1111{
+            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                let spsr = self.reg[*reg as usize];
+                self.set_cpsr(spsr);
+            }
+        }
+        //self._op_set_pc(res);
         0
     }
 
@@ -460,6 +500,13 @@ impl CPU{
             self.set_flag(Flag::C, !(self.operand2 > self.operand1));
             self.set_flag(Flag::V, (self.operand1 >> 31 != self.operand2 >> 31) && res >> 31 == self.operand2 >> 31);
         }
+        if self.reg_dest == 0b1111{
+            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                let spsr = self.reg[*reg as usize];
+                self.set_cpsr(spsr);
+            }
+        }
+        //self._op_set_pc(res);
         //println!("{}", self.read_flag(Flag::Z));
         0
     }
@@ -604,6 +651,12 @@ impl CPU{
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
+        if self.reg_dest == 0b1111{
+            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                let spsr = self.reg[*reg as usize];
+                self.set_cpsr(spsr);
+            }
+        }
         0
     }
 
@@ -613,6 +666,12 @@ impl CPU{
             self.set_flag(Flag::N, res >> 31 > 0);
             self.set_flag(Flag::Z, res == 0);
             self.set_flag(Flag::C, self.shifter_carry > 0);
+        }
+        if self.reg_dest == 0b1111{
+            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                let spsr = self.reg[*reg as usize];
+                self.set_cpsr(spsr);
+            }
         }
         0
     }
@@ -667,8 +726,9 @@ impl CPU{
             match self.spsr_map.get(&self.op_mode){
                 Some(&opmode) => opmode,
                 None => {
-                    println!("msr called on R=1, but this mode has no SPSR");
-                    Register::CPSR
+                    println!("msr called on R=1, but this mode has no SPSR {}", self.instr);
+                    //Register::CPSR
+                    return 1;
                 },
             }
         };
@@ -681,6 +741,10 @@ impl CPU{
         };
 
         let mask = (self.instr >> 16) & 0b1111;
+        if mask != 0b1001 && mask != 0b1000{
+            println!("MSR with invalid mask");
+            //return 1;
+        }
         //println!("  pc: {:#x}, instr: {:#034b}, mask: {:#06b}", self.actual_pc, self.instr, mask);
         let mut cur = self.reg[reg_dest as usize];
         for i in 0..4{
@@ -716,6 +780,8 @@ impl CPU{
             cur_cycles = 1;
             (Wrapping(operand3) * Wrapping(self.operand2)).0
         };
+        //#[cfg(feature="debug_instr")]
+        //if (self.bios_end && res == (Wrapping(32u32)-Wrapping(0)).0){println!("hi2")};
 
         self.set_reg(self.reg_dest, res);
 
@@ -804,7 +870,7 @@ impl CPU{
         let offset = if (self.instr >> 25) & 1 > 0 {
             // NOTE: double check if cycles are added here
             //cycles += 
-            self.process_reg_rotate();
+            self.process_reg_rotate(false);
             //self.debug(&format!(" reg rotate operand2: {:#x}", self.operand2));
             self.operand2
         }
@@ -973,10 +1039,12 @@ impl CPU{
             },
             // LDRH
             (true, false, true) => {
+                //self.set_reg(reg, bus.read_halfword(addr) as u32);
                 self.set_reg(reg, (bus.read_halfword(addr) as u32).rotate_right(rotate));
             },
             // LDRSH
             (true, true, true) => {
+                //let mut res = bus.read_halfword(addr) as u32;
                 let mut res = (bus.read_halfword(addr) as u32).rotate_right(rotate);
                 //println!("org: {:#034b} res: {:#034b}", bus.read_halfword(addr), res);
                 if rotate == 0 && (res >> 15) & 1 > 0{
@@ -1182,7 +1250,7 @@ impl CPU{
         0
     }
 
-    fn process_reg_rotate(&mut self) -> u32 {
+    fn process_reg_rotate(&mut self, is_dataproc: bool) -> u32 {
         // register is used
         //let reg = &self.reg_map.get(&self.op_mode).unwrap()[self.instr as usize & 0b1111];
         //let cur = self.reg[*reg as usize];
@@ -1198,8 +1266,9 @@ impl CPU{
         }
         // the shift amount is stored in the lowest byte in a register
         else{
-            //
-            self.set_reg(15, self.actual_pc + 12);
+            if is_dataproc{
+                self.set_reg(15, self.actual_pc + 12);
+            }
             //let reg = (self.instr >> 8) & 0b1111;
             //let reg = &self.reg_map.get(&self.op_mode).unwrap()[reg as usize];
             //shift_amount = self.reg[*reg as usize] & 0b11111111;
@@ -1291,7 +1360,7 @@ impl CPU{
             self.process_immediate_rotate()
         }
         else{
-            self.process_reg_rotate()
+            self.process_reg_rotate(true)
         }
     }
 
@@ -1386,8 +1455,11 @@ impl CPU{
 
     fn decode_execute_instruction_thumb(&mut self, bus: &mut Bus) -> u32 {
         // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
-        let aligned_pc = self.actual_pc & !0b01;
-        self.instr = bus.read_halfword(aligned_pc as usize) as u32;
+        self.actual_pc = self.actual_pc & !0b01;
+        self.instr = bus.read_halfword(self.actual_pc as usize) as u32;
+        if self.actual_pc < 0x4000{
+            self.last_fetched_bios_instr = bus.read_halfword_raw(self.actual_pc as usize + 4, MemoryRegion::BIOS) as u32;
+        }
         self.set_pc(self.actual_pc + 4);
 
         let mut cur_cycles = 0;
@@ -1497,6 +1569,11 @@ impl CPU{
 
     fn execute_thumb_undefined_instr(&mut self, _: &mut Bus) -> u32{
         print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
+        /*println!("");
+        for x in self.instr_debug_deque.iter(){
+            println!("{}",x);
+        }*/
+        //panic!();
         0
     }
 
@@ -2090,8 +2167,11 @@ impl CPU{
                 assert!(i != base_reg);
             }
         }
-
-        assert!(num_reg > 0);
+        if num_reg == 0 {
+            println!("critical error: num_reg == 0");
+            return 1;
+        }
+        //assert!(num_reg > 0);
 
         let mut cnt = 0;
         for i in 0..8 {
@@ -2220,9 +2300,8 @@ impl CPU{
     }
     
     fn execute_software_interrupt(&mut self) -> u32 {
-        //#[cfg(feature="debug_instr")]
-        //{self.debug_cnt += 200;}
         self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
+
             self.actual_pc + 2
         }
         else{
@@ -2285,7 +2364,7 @@ impl CPU{
     }
 
     // ---------- misc
-    pub fn print_pc(&mut self, bus: &Bus) {
+    pub fn print_pc(&mut self, bus: &mut Bus) {
         #[cfg(feature="debug_instr")]
         {
             
@@ -2371,6 +2450,8 @@ impl CPU{
 
     fn set_cpsr(&mut self, val: u32) {
         self.reg[Register::CPSR as usize] = val;
+        //#[cfg(feature="debug_instr")]
+        //if (self.bios_end && self.op_mode == OperatingMode::Fiq && val & 0b11111 == 0b11111){println!("hi3")};
         self.op_mode = match val & 0b11111 {
             0b10000 => OperatingMode::Usr,
             0b10001 => OperatingMode::Fiq,

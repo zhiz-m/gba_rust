@@ -185,18 +185,18 @@ impl Bus {
 
     // -------- public memory read/write interfaces, intended for user instructions. 
 
-    pub fn read_byte(&self, addr: usize) -> u8 {
+    pub fn read_byte(&mut self, addr: usize) -> u8 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, true);
         self.internal_read_byte(addr, region)
     }
 
-    pub fn read_halfword(&self, addr: usize) -> u16 {
+    pub fn read_halfword(&mut self, addr: usize) -> u16 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
         assert!(addr & 1 == 0);
         self.internal_read_byte(addr, region) as u16 + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
     }
 
-    pub fn read_word(&self, addr: usize) -> u32 {
+    pub fn read_word(&mut self, addr: usize) -> u32 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
         assert!(addr & 0b11 == 0);
         self.internal_read_byte(addr, region) as u32 + ((self.internal_read_byte(addr+1, region) as u32) << 8) + ((self.internal_read_byte(addr+2, region) as u32) << 16) + ((self.internal_read_byte(addr+3, region) as u32) << 24)
@@ -325,7 +325,7 @@ impl Bus {
         }
     }
 
-    fn internal_read_byte(&self, addr: usize, region: MemoryRegion) -> u8 {
+    fn internal_read_byte(&mut self, addr: usize, region: MemoryRegion) -> u8 {
         match region {
             MemoryRegion::IO => {
                 if 0x100 <= addr && addr <= 0x10e {
@@ -355,6 +355,20 @@ impl Bus {
                         0
                     }
                 }   
+                
+            },
+            MemoryRegion::BIOS => {
+                let offset = (addr & 0b11) << 3;
+                //let range = 0b11111111 << (offset);
+                if self.cpu.actual_pc >= 0x4000 {
+                    println!("attempt for CPU to read BIOS from outside, {} {:#x}",offset, self.cpu.last_fetched_bios_instr);
+                    ((self.cpu.last_fetched_bios_instr >> offset) & 0b11111111) as u8
+                }
+                else{
+                    //self.cpu.last_fetched_bios_instr &= !range;
+                    //self.cpu.last_fetched_bios_instr = (self.mapped_mem[region as usize][addr] as u32) << offset;
+                    self.mapped_mem[region as usize][addr]
+                }
                 
             },
             MemoryRegion::Illegal => {
@@ -789,7 +803,7 @@ impl Bus {
                 }
                 ((addr & 0x3ff), MemoryRegion::OAM)
             },
-            8 | 9 | 10 | 11 | 12 | 13 => {
+            8 | 9  => {
                 if !is_read {
                     return (0, MemoryRegion::Illegal)
                 }
@@ -818,7 +832,11 @@ impl Bus {
             }
             _ => {
                 #[cfg(feature="debug_instr")]
-                println!("illegal memory access: > 0x10000000: {:#x}", addr);
+                println!("illegal memory access: {:#x} {:#x}", addr, self.cpu.instr);
+                /*println!("");
+                for x in self.cpu.instr_debug_deque.iter(){
+                    println!("{}",x);
+                }*/
                 (0, MemoryRegion::Illegal)
             },
         }

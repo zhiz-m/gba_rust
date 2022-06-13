@@ -183,7 +183,7 @@ impl APU {
     }
 
     // called every config::AUDIO_SAMPLE_CLOCKS clocks
-    pub fn clock(&mut self, bus: &Bus) {
+    pub fn clock(&mut self, bus: &mut Bus) {
         self.square_disable[0] = false;
         self.square_disable[1] = false;
         let mut cur_tuple = StereoTuple::new();
@@ -358,7 +358,7 @@ impl APU {
         }
     }
 
-    fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &Bus) {
+    fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &mut Bus) {
         let snd_cur_cnt_l = bus.read_byte_raw(0x70, MemoryRegion::IO);
         if snd_cur_cnt_l >> 7 == 0 {
             //println!("wave channel disabled");
