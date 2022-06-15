@@ -29,11 +29,11 @@ pub struct GBA {
 }
 
 impl GBA {
-    pub fn new(rom_path: String, rom_save_path: Option<String>, save_state_bank: Option<usize>, cartridge_type_str: Option<String>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>, audio_sender: Sender<(f32, f32)>, audio_sample_rate: usize, fps_sender: Sender<f64>) -> GBA {
+    pub fn new(bios_path: &str, rom_path: &str, rom_save_path: Option<&str>, save_state_bank: Option<usize>, cartridge_type_str: Option<&str>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>, audio_sender: Sender<(f32, f32)>, audio_sample_rate: usize, fps_sender: Sender<f64>) -> GBA {
         let apu = APU::new(audio_sample_rate, audio_sender);
 
         let rom_save_path = match rom_save_path {
-            Some(path) => path,
+            Some(path) => path.to_string(),
             None => {
                 let save_state_dir = Path::new(&rom_path).parent().unwrap().to_str().expect("invalid rom path").to_string() + config::SAVE_FILE_DIR;
                 fs::create_dir_all(&save_state_dir).unwrap();
@@ -71,7 +71,7 @@ impl GBA {
         };
 
         let res = GBA { 
-            bus: Bus::new(rom_path, initial_save_state, cartridge_type_str, apu), 
+            bus: Bus::new(bios_path, rom_path, initial_save_state, cartridge_type_str, apu), 
             //cpu: CPU::new(), 
             ppu: PPU::new(), 
             input_handler: InputHandler::new(),

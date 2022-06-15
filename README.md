@@ -1,7 +1,7 @@
 # gba_rust
 
 ## Pre-requisites:
-This emulator requires a copy of the GBA bios. It shouldn't be hard to find online, but for legal reasons it can't be included in this repo. Create an environment variable named `GBA_RUST_BIOS` with a path to the bios file.
+This emulator requires a copy of the GBA bios. It shouldn't be hard to find online, but for legal reasons it can't be included in this repo. Place the BIOS file at `extern/GBA/gba_bios.bin`.
 
 ## How to run:
 

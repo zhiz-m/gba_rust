@@ -96,7 +96,7 @@ pub struct Bus{
 }
 
 impl Bus {
-    pub fn new(rom_path : String, save_state: Option<&[u8]>, cartridge_type_str: Option<String>, apu: APU) -> Bus{
+    pub fn new(bios_path: &str, rom_path: &str, save_state: Option<&[u8]>, cartridge_type_str: Option<&str>, apu: APU) -> Bus{
         //let mut mem = vec![0; MEM_MAX];
 
         let mut mapped_mem = vec![
@@ -112,7 +112,7 @@ impl Bus {
         ];
 
         // load BIOS
-        let bios_path = env::var("GBA_RUST_BIOS").unwrap();
+        //let bios_path = env::var("GBA_RUST_BIOS").unwrap();
         let mut reader = BufReader::new(File::open(bios_path).unwrap());
         reader.read(&mut mapped_mem[MemoryRegion::BIOS as usize][..]).unwrap();
 

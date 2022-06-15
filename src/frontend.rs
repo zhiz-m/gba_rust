@@ -11,13 +11,8 @@ use piston::event_loop::{EventSettings, Events};
 use piston::input::{RenderEvent};
 use piston::window::WindowSettings;
 
-use crate::{
-    ppu::{
-        ScreenBuffer,  
-    },
-    input_handler::{
-        KeyInput
-    }
+use gba_core::{
+    ScreenBuffer, KeyInput
 };
 
 pub struct Frontend{

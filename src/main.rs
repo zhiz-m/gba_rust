@@ -1,17 +1,9 @@
-mod gba;
-mod bus;
-mod cpu;
-mod ppu;
+
 mod frontend;
-mod config;
-mod input_handler;
-mod dma_channel;
-mod algorithm;
-mod timer;
-mod apu;
 
 use clap::Parser;
 use frontend::Frontend;
+use gba_core::GBA;
 
 use std::{env, thread, sync::mpsc};
 
@@ -40,6 +32,7 @@ fn main() {
     //let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
     //let rom_save_path = env::args().nth(2);
     //let cartridge_type_str = env::args().nth(3);
+    let bios_path = "./extern/GBA/gba_bios.bin";
 
     let (tx, rx) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
@@ -51,7 +44,7 @@ fn main() {
     let (tx4, rx4) = mpsc::channel();
 
     let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx, tx2, rx3, rx4);
-    let mut gba = gba::GBA::new(cli.rom_path, cli.rom_save_path, cli.save_state_bank, cli.cartridge_type_str, tx, rx2, tx3, frontend.get_sample_rate(), tx4);
+    let mut gba = GBA::new(&bios_path, &cli.rom_path, cli.rom_save_path.as_deref(), cli.save_state_bank, cli.cartridge_type_str.as_deref(), tx, rx2, tx3, frontend.get_sample_rate(), tx4);
 
     thread::spawn(move || {
         gba.start().unwrap();

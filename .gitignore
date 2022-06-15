@@ -1,8 +1,5 @@
 /target
-*.bin
-*.gba
-*.sav
-*.txt
-*.rustsav
 /.vscode
 /reference_materials
+/extern
+/test_roms
