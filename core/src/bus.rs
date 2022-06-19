@@ -96,7 +96,7 @@ pub struct Bus{
 }
 
 impl Bus {
-    pub fn new(bios_path: &str, rom_path: &str, save_state: Option<&[u8]>, cartridge_type_str: Option<&str>, apu: APU) -> Bus{
+    pub fn new(bios_bin: &[u8], rom_bin: &[u8], save_state: Option<&[u8]>, cartridge_type_str: Option<&str>, apu: APU) -> Bus{
         //let mut mem = vec![0; MEM_MAX];
 
         let mut mapped_mem = vec![
@@ -113,12 +113,14 @@ impl Bus {
 
         // load BIOS
         //let bios_path = env::var("GBA_RUST_BIOS").unwrap();
-        let mut reader = BufReader::new(File::open(bios_path).unwrap());
+        /*let mut reader = BufReader::new(File::open(bios_path).unwrap());
         reader.read(&mut mapped_mem[MemoryRegion::BIOS as usize][..]).unwrap();
 
         // load ROM
         let mut reader = BufReader::new(File::open(rom_path).unwrap());
-        reader.read(&mut mapped_mem[MemoryRegion::Cartridge as usize][..]).unwrap();
+        reader.read(&mut mapped_mem[MemoryRegion::Cartridge as usize][..]).unwrap();*/
+        mapped_mem[MemoryRegion::BIOS as usize][..].copy_from_slice(bios_bin);
+        mapped_mem[MemoryRegion::Cartridge as usize][..rom_bin.len()].copy_from_slice(rom_bin);
 
         let cartridge_type = match cartridge_type_str {
             None => derive_cartridge_type(&mapped_mem[MemoryRegion::Cartridge as usize][..]),
@@ -143,7 +145,7 @@ impl Bus {
 
         println!("backup type: {}", cartridge_type as u32);
 
-        let mut res = Bus { 
+        Bus { 
             mapped_mem,
 
             cartridge_type,
@@ -169,18 +171,7 @@ impl Bus {
 
             cpu: CPU::new(),
             apu,
-        };
-
-        // load special addresses
-        /*res.addr_special_handling.insert(0x04000301);
-        res.addr_special_handling.insert(0x04000202);
-        res.addr_special_handling.insert(0x04000203);
-        res.addr_special_handling.insert(0x040000bb);
-        res.addr_special_handling.insert(0x040000c7); // + 12
-        res.addr_special_handling.insert(0x040000d3); // + 12
-        res.addr_special_handling.insert(0x040000df); // + 12
-        */
-        res
+        }
     }
 
     // -------- public memory read/write interfaces, intended for user instructions. 

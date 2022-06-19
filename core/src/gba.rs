@@ -20,19 +20,19 @@ pub struct GBA {
     ppu: PPU,
     input_handler: InputHandler,
 
-    screenbuf_sender: Sender<ScreenBuffer>,
+    screenbuf_handler: Box<dyn Fn(ScreenBuffer) + Send>,
     key_receiver: Receiver<(KeyInput,bool)>,
     fps_sender: Sender<f64>,
 
-    rom_save_path: String,
     save_state: Vec<Vec<u8>>,
+    save_state_handler: Box<dyn Fn(&[u8]) + Send>,
 }
 
 impl GBA {
-    pub fn new(bios_path: &str, rom_path: &str, rom_save_path: Option<&str>, save_state_bank: Option<usize>, cartridge_type_str: Option<&str>, screenbuf_sender: Sender<ScreenBuffer>, key_receiver: Receiver<(KeyInput,bool)>, audio_sender: Sender<(f32, f32)>, audio_sample_rate: usize, fps_sender: Sender<f64>) -> GBA {
-        let apu = APU::new(audio_sample_rate, audio_sender);
+    pub fn new(bios_bin: &[u8], rom_bin: &[u8], save_state: Option<Vec<u8>>, save_state_bank: Option<usize>, cartridge_type_str: Option<&str>, save_state_handler: Box<dyn Fn(&[u8]) + Send>, screenbuf_handler: Box<dyn Fn(ScreenBuffer) + Send>, key_receiver: Receiver<(KeyInput,bool)>, audio_handler: Box<dyn Fn(&[Vec<f32>]) + Send>, audio_sample_rate: usize, fps_sender: Sender<f64>) -> GBA {
+        let apu = APU::new(audio_sample_rate, audio_handler);
 
-        let rom_save_path = match rom_save_path {
+        /*let rom_save_path = match rom_save_path {
             Some(path) => path.to_string(),
             None => {
                 let save_state_dir = Path::new(&rom_path).parent().unwrap().to_str().expect("invalid rom path").to_string() + config::SAVE_FILE_DIR;
@@ -63,24 +63,28 @@ impl GBA {
             for i in 0..config::NUM_SAVE_STATES{
                 reader.read(&mut save_state[i]).unwrap();
             }
-        }
-
+        }*/
+        let save_state = save_state.map(
+            |x| x.chunks(x.len() / config::NUM_SAVE_STATES).map(
+                |x| x.to_vec()
+            ).collect()
+        ).unwrap_or(vec![vec![0; 128*1024]; config::NUM_SAVE_STATES]);
         let initial_save_state = match save_state_bank {
             None => None,
             Some(bank) => Some(save_state[bank-1].as_slice()),
         };
 
         let res = GBA { 
-            bus: Bus::new(bios_path, rom_path, initial_save_state, cartridge_type_str, apu), 
+            bus: Bus::new(bios_bin, rom_bin, initial_save_state, cartridge_type_str, apu), 
             //cpu: CPU::new(), 
             ppu: PPU::new(), 
             input_handler: InputHandler::new(),
-            screenbuf_sender,
+            screenbuf_handler,
             key_receiver,
             fps_sender,
 
-            rom_save_path,
             save_state,
+            save_state_handler,
         };
 
         // zero out input registers (NOTE: handled by BIOS)
@@ -227,9 +231,10 @@ impl GBA {
                 Workflow::PPU => {
                     let (clocks, buff) = self.ppu.clock(&mut self.bus);
                     if let Some(buff) = buff{
-                        if let Err(why) = self.screenbuf_sender.send(buff){
-                            println!("   screenbuf sending error: {}", why.to_string());
-                        }
+                        self.screenbuf_handler.as_ref()(buff);
+                        //if let Err(why) = self.screenbuf_sender.send(buff){
+                        //    println!("   screenbuf sending error: {}", why.to_string());
+                        //}
         
                         // handle input once per frame
                         self.input_handler.process_input(&self.key_receiver, &mut self.bus);
@@ -252,11 +257,13 @@ impl GBA {
                             }
                         }
                         if save_updated {
-                            let mut writer = BufWriter::new(File::create(&self.rom_save_path).unwrap());
+                            /*let mut writer = BufWriter::new(File::create(&self.rom_save_path).unwrap());
                             for i in 0..config::NUM_SAVE_STATES{
                                 writer.write(&self.save_state[i]).unwrap();
                             }
                             println!("save written to {}", self.rom_save_path);
+                            */
+                            self.save_state_handler.as_ref()(&self.save_state[..].concat());
                         }
                     }
                     heap.push(Reverse((cur.0 + clocks, Workflow::PPU)));

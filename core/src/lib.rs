@@ -11,3 +11,4 @@ mod gba;
 pub use gba::GBA;
 pub use ppu::ScreenBuffer;
 pub use input_handler::KeyInput;
+pub use config::SAVE_STATE_SIZE;

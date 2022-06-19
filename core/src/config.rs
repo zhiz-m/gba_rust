@@ -28,8 +28,7 @@ pub const AUDIO_SAMPLE_CLOCKS_POW2: u32 = 24 - AUDIO_SAMPLE_RATE_POW2;
 pub const AUDIO_SAMPLE_CLOCKS: u32 = 1 << AUDIO_SAMPLE_CLOCKS_POW2;
 
 pub const NUM_SAVE_STATES: usize = 5;
-pub const SAVE_FILE_DIR: &str = "/rustsav";
-pub const SAVE_FILE_SUF: &str = ".rustsav";
+pub const SAVE_STATE_SIZE: usize = 128 * 1024 * NUM_SAVE_STATES;
 
 // number of frames to pass before rendering in speedup mode
 pub const FRAME_RENDER_INTERVAL_SPEEDUP: u32 = 8;

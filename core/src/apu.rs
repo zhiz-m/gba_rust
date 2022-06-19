@@ -133,7 +133,7 @@ pub struct APU {
     sound_in_buff: Vec<Vec<f32>>,
     sound_out_buff: Vec<Vec<f32>>,
     sampler: FftFixedInOut<f32>,
-    audio_sender: Sender<(f32, f32)>,
+    audio_handler: Box<dyn Fn(&[Vec<f32>]) + Send>,
 
     pub extern_audio_enabled: bool,
 
@@ -141,7 +141,7 @@ pub struct APU {
 }
 
 impl APU {
-    pub fn new(sample_rate_output: usize, audio_sender: Sender<(f32, f32)>) -> APU {
+    pub fn new(sample_rate_output: usize, audio_handler: Box<dyn Fn(&[Vec<f32>]) + Send>) -> APU {
         /*let params = InterpolationParameters{
             sinc_len: 256,
             f_cutoff: 0.95,
@@ -176,7 +176,7 @@ impl APU {
             sound_in_buff: sampler.input_buffer_allocate(),
             sound_out_buff: sampler.output_buffer_allocate(),
             sampler,
-            audio_sender,
+            audio_handler,
 
             extern_audio_enabled: true,
         }
@@ -276,10 +276,10 @@ impl APU {
                         _ => unreachable!(),
                     } as i16;
                     if self.square_sweep_cnt[i] % period_clocks < active_clocks {
-                        //cur_tuple.add(j, final_square_vol * dmg_vol[j]);
+                        cur_tuple.add(j, final_square_vol * dmg_vol[j]);
                     }
                     else{
-                        //cur_tuple.add(j, -final_square_vol * dmg_vol[j]);
+                        cur_tuple.add(j, -final_square_vol * dmg_vol[j]);
                     }
                 }
 
@@ -347,9 +347,11 @@ impl APU {
         if self.sound_in_buff[0].len() == self.sampler.input_frames_next() {
             self.sampler.process_into_buffer(&self.sound_in_buff, &mut self.sound_out_buff, None).unwrap();
             if self.extern_audio_enabled{
-                for j in 0..self.sound_out_buff[0].len(){
-                    self.audio_sender.send((self.sound_out_buff[0][j], self.sound_out_buff[1][j])).unwrap();
-                }
+                self.audio_handler.as_ref()(&self.sound_out_buff);
+                //for j in 0..self.sound_out_buff[0].len(){
+                    //self.audio_handler.as_ref()(&self.sound_out_buff);
+                    //self.audio_sender.send((self.sound_out_buff[0][j], self.sound_out_buff[1][j])).unwrap();
+                //}
             }
             self.sound_in_buff[0].clear();
             self.sound_in_buff[1].clear();

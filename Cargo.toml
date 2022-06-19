@@ -1,25 +1,18 @@
-[package]
-name = "gba_rust"
-version = "0.1.0"
-authors = ["Zhizhou Ma <zm9913@gmail.com>"]
-edition = "2021"
+[workspace]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-piston = "0.53.0"
-piston2d-graphics = "0.41.0"
-pistoncore-glutin_window = "0.69.0"
-piston2d-opengl_graphics = "0.79.0"
-clap = { version = "3.1.18", features = ["derive"] }
-cpal = "0.13.5"
-gba-core = {path = "./core"}
-
-[features]
-default = ["binary_heap_loop"]
-debug_instr = []
-print_cps = []
-binary_heap_loop = []
+members = [
+    "core",
+    "frontends/desktop-native",
+    "frontends/wasm",
+]
 
 [profile.dev]
 overflow-checks = false
+
+[profile.release-lto]
+inherits = "release"
+lto = true
+codegen-units = 1
+
+[profile.release-lto.package."*"]
+opt-level = 3
