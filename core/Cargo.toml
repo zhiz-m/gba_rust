@@ -10,7 +10,5 @@ edition = "2021"
 rubato = "0.12.0"
 
 [features]
-default = ["binary_heap_loop"]
 debug_instr = []
 print_cps = []
-binary_heap_loop = []

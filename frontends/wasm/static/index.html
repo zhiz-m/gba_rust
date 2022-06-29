@@ -2,9 +2,31 @@
 <html>
   <head>
     <meta charset="UTF-8">
-    <title>My Rust + Webpack project!</title>
+    <title>gba_rust</title>
   </head>
   <body>
     <script src="index.js"></script>
+    <div>
+      <label>
+        select BIOS file
+        <input type="file" id="bios_input">
+      </label>
+      <label style="display:block;">
+        select ROM file
+        <input type="file" id="rom_input">
+      </label>
+      <label style="display:block;">
+        select save state
+        <input type="file" id="save_state_input">
+      </label>
+      <label style="display:block;">
+        select save bank (1-5)
+        <input type="text" id="save_bank_input">
+      </label>
+      <button id="reset_button" style="display:block;">Reset</button>
+      <canvas id="gba_rust_canvas" style="display:block;"></canvas>
+      <div style="display:block;" id="fps_label">
+      </div>
+  </div>
   </body>
 </html>

@@ -11,12 +11,13 @@ crate-type = ["cdylib"]
 
 [features]
 # If you uncomment this line, it will enable `wee_alloc`:
-#default = ["wee_alloc"]
+default = ["wee_alloc"]
 
 [dependencies]
 # The `wasm-bindgen` crate provides the bare minimum functionality needed
 # to interact with JavaScript.
 wasm-bindgen = "0.2.45"
+js-sys = "0.3.22"
 gba-core = {path = "../../core"}
 
 # `wee_alloc` is a tiny allocator for wasm that is only ~1K in code size
@@ -28,7 +29,26 @@ wee_alloc = { version = "0.4.2", optional = true }
 # like the DOM.
 [dependencies.web-sys]
 version = "0.3.22"
-features = ["console", "HtmlCanvasElement", "AudioBuffer"]
+features = [
+    "console", 
+    "Window", 
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d", 
+    "HtmlInputElement", 
+    "HtmlButtonElement", 
+    "HtmlDivElement",
+    "AudioContext", 
+    "AudioBuffer", 
+    "Document", 
+    "AudioDestinationNode", 
+    "AudioBufferSourceNode", 
+    "EventListener", 
+    "Blob", 
+    "FileReader", 
+    "FileList", 
+    "File",
+    "ImageData"
+]
 
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
