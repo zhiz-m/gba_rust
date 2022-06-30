@@ -29,7 +29,7 @@ impl Pixel {
     }
 
     pub fn blend(pixel_front: Pixel, pixel_back: Pixel, a: u16, b: u16) -> Pixel {
-        Pixel(
+        Pixel::new(
             ((pixel_front.0 as u16 * a + pixel_back.0 as u16 * b) >> 4) as u8,
             ((pixel_front.1 as u16 * a + pixel_back.1 as u16 * b) >> 4) as u8,
             ((pixel_front.2 as u16 * a + pixel_back.2 as u16 * b) >> 4) as u8,

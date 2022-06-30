@@ -10,7 +10,7 @@ members = [
 overflow-checks = false
 
 [profile.release]
-#lto = true
+lto = true
 opt-level = 3
 
 [profile.release-lto]

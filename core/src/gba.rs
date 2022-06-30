@@ -38,7 +38,7 @@ pub struct GBA {
     save_state_updated: bool,
 
     heap: BinaryHeap<Reverse<(u32, Workflow)>>,
-    workflow_times: [u32; 5],
+    workflow_times: [(u32, Workflow); 5],
     time_until_non_cpu_execution: u32,
 
     last_finished_time: u64, // microseconds, continuous time
@@ -125,7 +125,13 @@ impl GBA {
                 Reverse((0, Workflow::PPU)),
                 Reverse((0, Workflow::Normaliser)),
             ]),
-            workflow_times: [0; 5],
+            workflow_times: [
+                (0, Workflow::Timer),
+                (0, Workflow::CPU),
+                (0, Workflow::APU),
+                (0, Workflow::PPU),
+                (0, Workflow::Normaliser),
+            ],
             time_until_non_cpu_execution: 0,
 
             //last_finished_time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap(),
@@ -191,30 +197,29 @@ impl GBA {
         self.started = true;
     }
 
-    // on successful frame, returns the number of microseconds that the emulator clock is ahead of the supposed true GBA clock
+    /// on successful frame, returns the number of microseconds that the emulator clock is ahead of the supposed true GBA clock
     pub fn process_frame(&mut self, current_time: u64) -> Result<u64, &'static str> {
         loop {
-            /*
-            match x {
-                0 => {
+            match self.workflow_times.iter().min().unwrap().1 {
+                Workflow::Timer => {
                     self.bus.timer_clock();
-                    self.workflow_times[0] += config::TIMER_CLOCK_INTERVAL_CLOCKS;
+                    self.workflow_times[0].0 += config::TIMER_CLOCK_INTERVAL_CLOCKS;
                 }
-                1 => {
-                    self.workflow_times[1] += self.bus.cpu_clock();
+                Workflow::CPU => {
+                    self.workflow_times[1].0 += self.bus.cpu_clock();
                 }
-                2 => {
+                Workflow::APU => {
                     self.bus.apu_clock();
-                    self.workflow_times[2] += config::AUDIO_SAMPLE_CLOCKS;
+                    self.workflow_times[2].0 += config::AUDIO_SAMPLE_CLOCKS;
                 }
-                3 => {
-                    self.workflow_times[3] += self.ppu.clock(&mut self.bus);
+                Workflow::PPU => {
+                    self.workflow_times[3].0 += self.ppu.clock(&mut self.bus);
                     if self.ppu.buffer_ready {
                         self.on_new_buffer(current_time);
                         return Ok(if self.last_finished_time > current_time {self.last_finished_time - current_time} else {0});
                     }
                 }
-                4 => {
+                Workflow::Normaliser => {
                     if !self.input_handler.cur_speedup_state {
                         self.last_finished_time += config::CPU_EXECUTION_INTERVAL_US;
                     }
@@ -239,17 +244,17 @@ impl GBA {
                     }
 
                     // roughly every second in real-time, we want to normalize all the values in the array
-                    if self.workflow_times[4] >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60 {
-                        let min = self.workflow_times[4];
-                        self.workflow_times.iter_mut().for_each(|x|*x -= min);
-                        self.workflow_times[4] = config::CPU_EXECUTION_INTERVAL_CLOCKS;
+                    if self.workflow_times[4].0 >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60 {
+                        let min = self.workflow_times[4].0;
+                        self.workflow_times.iter_mut().for_each(|x|(*x).0 -= min);
+                        self.workflow_times[4].0 = config::CPU_EXECUTION_INTERVAL_CLOCKS;
                     } else {
-                        self.workflow_times[4] += config::CPU_EXECUTION_INTERVAL_CLOCKS;
+                        self.workflow_times[4].0 += config::CPU_EXECUTION_INTERVAL_CLOCKS;
                     }
                 }
                 _ => unreachable!(),
-            }*/
-            let cur = self
+            }
+            /*let cur = self
                 .heap
                 .peek()
                 .expect("logical error: binary heap is empty")
@@ -327,7 +332,7 @@ impl GBA {
                         )));
                     }
                 }
-            }
+            }*/
         }
     }
 

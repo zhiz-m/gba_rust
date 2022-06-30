@@ -314,24 +314,6 @@ impl CPU {
                     false => self.decode_execute_instruction_arm(bus),
                     true => self.decode_execute_instruction_thumb(bus)
                 };
-                /*if self.instr_debug_deque_cnt > 0 {
-                    self.instr_debug_deque_cnt -= 1;
-                    println!("{:#010x} {:#010x} {:#010x} {:#10x}",self.instr,self.actual_pc,self.reg[12],self.reg[Register::CPSR as usize]);
-                }*/
-                /*if self.instr != 0 {
-                    if self.instr_debug_deque.len() == 100{
-                        self.instr_debug_deque.pop_front();
-                    }
-                    //self.instr_debug_deque.push_back(format!("{:#010x} {:#010x} {:#010x} {:#10x}",self.instr,self.actual_pc,self.reg[12],self.reg[Register::CPSR as usize]));
-                    self.instr_debug_deque.push_back(format!("{:#010x} {:#010x}",self.instr,self.actual_pc));
-                }*/
-                /*if self.actual_pc >= 0xa000000{
-                    println!("");
-                    for x in self.instr_debug_deque.iter(){
-                        println!("{}",x);
-                    }
-                    panic!();
-                }*/
                 res
             }
         //).take(config::CPU_ITERATIONS_PER_SIMULATION).sum()
