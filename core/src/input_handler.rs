@@ -1,11 +1,8 @@
-use std::{sync::mpsc::Receiver};
+use std::sync::mpsc::Receiver;
 
-use crate::{
-    bus::Bus,
-    config
-};
+use crate::{bus::Bus, config};
 
-#[derive(Clone,Copy)]
+#[derive(Clone, Copy)]
 pub enum KeyInput {
     // GBA official keys
     A = 0,
@@ -48,7 +45,7 @@ impl KeyBuffer {
 
 pub struct InputHandler {
     keybuf: KeyBuffer,
-    
+
     // speedup state: true means emulator is in speedup mode
     pub prev_speedup_state: bool,
     pub cur_speedup_state: bool,
@@ -66,7 +63,38 @@ impl InputHandler {
         }
     }
 
-    pub fn process_input(&mut self, key_receiver: &Receiver<(KeyInput, bool)>, bus: &mut Bus) {
+    pub fn process_key(&mut self, key: KeyInput, is_pressed: bool) {
+        match key {
+            KeyInput::Speedup => {
+                self.cur_speedup_state = is_pressed;
+            }
+            KeyInput::Save0
+            | KeyInput::Save1
+            | KeyInput::Save2
+            | KeyInput::Save3
+            | KeyInput::Save4 => {
+                self.save_requested[key as usize - KeyInput::Save0 as usize] = is_pressed;
+            }
+            _ => {
+                if is_pressed {
+                    self.keybuf.press_key(key);
+                } else {
+                    self.keybuf.release_key(key);
+                }
+            }
+        }
+    }
+
+    // must be called before processing keys for each frame
+    pub fn frame_preprocess(&mut self) {
+        self.prev_speedup_state = self.cur_speedup_state;
+    }
+
+    pub fn commit(&self, bus: &mut Bus) {
+        bus.store_halfword(0x04000130, self.keybuf.0);
+    }
+
+    /*pub fn process_input(&mut self, key_receiver: &Receiver<(KeyInput, bool)>, bus: &mut Bus) {
         self.prev_speedup_state = self.cur_speedup_state;
         while let Ok((key, is_pressed)) = key_receiver.try_recv() {
             match key {
@@ -85,8 +113,8 @@ impl InputHandler {
                     }
                 }
             }
-            
+
         }
         bus.store_halfword(0x04000130, self.keybuf.0);
-    }
+    }*/
 }

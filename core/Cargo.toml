@@ -8,3 +8,7 @@ edition = "2021"
 
 [dependencies]
 rubato = "0.12.0"
+
+[features]
+debug_instr = []
+print_cps = []
