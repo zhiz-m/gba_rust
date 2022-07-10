@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{Receiver, Sender};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -19,8 +20,8 @@ pub struct Frontend {
     events: Option<Events>,
     title: String,
 
-    screenbuf_receiver: Receiver<ScreenBuffer>,
-    last_screenbuf: ScreenBuffer,
+    screenbuf: Arc<Mutex<ScreenBuffer>>,
+    screenbuf_copy: ScreenBuffer,
 
     key_map: HashMap<Key, KeyInput>,
     key_sender: Sender<(KeyInput, bool)>,
@@ -36,7 +37,7 @@ pub struct Frontend {
 impl Frontend {
     pub fn new(
         title: String,
-        screenbuf_receiver: Receiver<ScreenBuffer>,
+        screenbuf: Arc<Mutex<ScreenBuffer>>,
         key_sender: Sender<(KeyInput, bool)>,
         audio_receiver: Receiver<(f32, f32)>,
         fps_receiver: Receiver<f64>,
@@ -60,8 +61,8 @@ impl Frontend {
             events: None,
             title,
 
-            screenbuf_receiver,
-            last_screenbuf: ScreenBuffer::new(),
+            screenbuf,
+            screenbuf_copy: ScreenBuffer::new(),
 
             key_map: HashMap::from([
                 (Key::Z, KeyInput::A),
@@ -157,9 +158,6 @@ impl Frontend {
             .unwrap()
             .next(self.window.as_mut().unwrap())
         {
-            while let Ok(buf) = self.screenbuf_receiver.try_recv() {
-                self.last_screenbuf = buf;
-            }
             while let Ok(fps) = self.fps_receiver.try_recv() {
                 self.cur_fps = fps;
                 self.avg_fps = self.avg_fps * 0.8 + 0.2 * self.cur_fps;
@@ -179,10 +177,14 @@ impl Frontend {
                 self.gl.as_mut().unwrap().draw(args.viewport(), |c, gl| {
                     clear([0., 0., 0., 1.], gl);
 
+                    let screenbuf = self.screenbuf.lock().unwrap();
+                    self.screenbuf_copy.clone_from(&screenbuf);
+                    std::mem::drop(screenbuf);
+
                     for j in 0..160 {
                         for i in 0..240 {
                             let transform = c.transform.trans(i as f64 * 2., j as f64 * 2.);
-                            let pixel = self.last_screenbuf.read_pixel(j, i).to_float();
+                            let pixel = self.screenbuf_copy.read_pixel(j, i).to_float();
                             rectangle([pixel.0, pixel.1, pixel.2, 1.], square, transform, gl);
                         }
                     }

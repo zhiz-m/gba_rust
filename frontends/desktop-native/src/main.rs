@@ -3,14 +3,14 @@ mod frontend;
 
 use clap::Parser;
 use frontend::Frontend;
-use gba_core;
+use gba_core::{self, ScreenBuffer};
 
 use std::{
     env,
     fs::{self, read, File},
     io::{BufReader, Read},
     path::Path,
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread, time::{SystemTime, UNIX_EPOCH, Duration},
 };
 
@@ -26,7 +26,7 @@ struct Arguments {
     rom_save_path: Option<String>,
 
     /// Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]
-    #[clap(short, long)]
+    #[clap(short = 'c', long)]
     cartridge_type_str: Option<String>,
 
     /// Save bank to load from
@@ -42,7 +42,6 @@ fn main() {
     let bios_path = "./extern/GBA/gba_bios.bin";
 
     // screen buffer
-    let (tx1, rx1) = mpsc::channel();
 
     let (tx2, rx2) = mpsc::channel();
 
@@ -94,7 +93,9 @@ fn main() {
         .map(|bin| gba_core::marshall_save_state(&bin))
         .ok();
 
-    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx1, tx2, rx3, rx4);
+    let screenbuf = Arc::new(Mutex::new(ScreenBuffer::new()));
+
+    let mut frontend = Frontend::new("gba_rust frontend".to_string(), screenbuf.clone(), tx2, rx3, rx4);
     let mut gba = gba_core::GBA::new(
         &bios_bin,
         &rom_bin,
@@ -104,6 +105,9 @@ fn main() {
         frontend.get_sample_rate(),
     );
 
+    std::mem::drop(bios_bin);
+    std::mem::drop(rom_bin);
+
     thread::spawn(move || {
         gba.init(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64);
         loop {
@@ -112,9 +116,7 @@ fn main() {
 
             // video
             if let Some(screen_buffer) = gba.get_screen_buffer() {
-                if let Err(why) = tx1.send(screen_buffer.clone()) {
-                    println!("   screenbuf sending error: {}", why.to_string());
-                }
+                screenbuf.clone().lock().unwrap().clone_from(screen_buffer);
             }
 
             // audio

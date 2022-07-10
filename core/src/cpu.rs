@@ -5,12 +5,14 @@ use crate::{
     bus::{Bus, MemoryRegion},
     config,
     dma_channel::DMA_Channel,
+    algorithm::DumbHashMap
 };
 use std::{
     cmp::min,
     collections::{HashMap, VecDeque},
     num::Wrapping,
 };
+use fxhash::FxHashMap;
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register {
@@ -76,7 +78,11 @@ pub enum Flag {
 }
 
 pub struct CPU {
-    arm_instr_table: Vec<fn(&mut CPU, &mut Bus) -> u32>,
+    //arm_instr_cache: DumbHashMap<fn(&mut CPU, &mut Bus) -> u32>,
+    //arm_instr_cache: FxHashMap<u32, fn(&mut CPU, &mut Bus) -> u32>,
+    thumb_instr_table: Vec<fn(&mut CPU, &mut Bus) -> u32>,
+
+    pub pipeline_instr: VecDeque<u32>,
 
     reg: [u32; 37],
     pub instr: u32,
@@ -89,7 +95,8 @@ pub struct CPU {
     op_mode: OperatingMode,
 
     reg_map: [[Register; 16]; 7],
-    spsr_map: HashMap<OperatingMode, Register>,
+    cur_reg_map: [Register; 16],
+    spsr_map: [Option<Register>; 7],
 
     increment_pc: bool,
     thumb_modify_flags: bool,
@@ -101,14 +108,151 @@ pub struct CPU {
     pub debug_cnt: u32,
     #[cfg(feature = "debug_instr")]
     bios_end: bool,
+    #[cfg(feature = "debug_instr")]
+    pub instr_log: VecDeque<(u32,u32)>,
 
     pub last_fetched_bios_instr: u32,
+
+    pub arm_count: usize,
+    pub arm_cache_miss: usize,
+    pub thumb_count: usize,
 }
 
 impl CPU {
     pub fn new() -> CPU {
+        let reg_map = [
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13,
+                Register::R14,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8_fiq,
+                Register::R9_fiq,
+                Register::R10_fiq,
+                Register::R11_fiq,
+                Register::R12_fiq,
+                Register::R13_fiq,
+                Register::R14_fiq,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13_irq,
+                Register::R14_irq,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13_svc,
+                Register::R14_svc,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13_abt,
+                Register::R14_abt,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13,
+                Register::R14,
+                Register::R15,
+            ],
+            [
+                Register::R0,
+                Register::R1,
+                Register::R2,
+                Register::R3,
+                Register::R4,
+                Register::R5,
+                Register::R6,
+                Register::R7,
+                Register::R8,
+                Register::R9,
+                Register::R10,
+                Register::R11,
+                Register::R12,
+                Register::R13_und,
+                Register::R14_und,
+                Register::R15,
+            ],
+        ];
         let mut res = CPU {
-            arm_instr_table: CPU::generate_arm_decode_table(),
+            //arm_instr_cache: DumbHashMap::<fn(&mut CPU, &mut Bus) -> u32>::new(),
+            //arm_instr_cache: FxHashMap::default(),
+            thumb_instr_table: CPU::generate_thumb_decode_table(),
+            pipeline_instr: VecDeque::<u32>::with_capacity(3),
             reg: [0; 37],
             instr: 0,
             shifter_carry: 0,
@@ -121,141 +265,24 @@ impl CPU {
 
             op_mode: OperatingMode::Sys,
 
-            reg_map: [
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13,
-                    Register::R14,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8_fiq,
-                    Register::R9_fiq,
-                    Register::R10_fiq,
-                    Register::R11_fiq,
-                    Register::R12_fiq,
-                    Register::R13_fiq,
-                    Register::R14_fiq,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13_irq,
-                    Register::R14_irq,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13_svc,
-                    Register::R14_svc,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13_abt,
-                    Register::R14_abt,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13,
-                    Register::R14,
-                    Register::R15,
-                ],
-                [
-                    Register::R0,
-                    Register::R1,
-                    Register::R2,
-                    Register::R3,
-                    Register::R4,
-                    Register::R5,
-                    Register::R6,
-                    Register::R7,
-                    Register::R8,
-                    Register::R9,
-                    Register::R10,
-                    Register::R11,
-                    Register::R12,
-                    Register::R13_und,
-                    Register::R14_und,
-                    Register::R15,
-                ],
+            reg_map,
+            cur_reg_map: reg_map[OperatingMode::Sys as usize],
+            spsr_map: [
+                None,
+                Some(Register::SPSR_fiq),
+                Some(Register::SPSR_irq),
+                Some(Register::SPSR_svc),
+                Some(Register::SPSR_abt),
+                None,
+                Some(Register::SPSR_und),
             ],
-            spsr_map: HashMap::from([
+            /*spsr_map: HashMap::from([
                 (OperatingMode::Fiq, Register::SPSR_fiq),
                 (OperatingMode::Svc, Register::SPSR_svc),
                 (OperatingMode::Abt, Register::SPSR_abt),
                 (OperatingMode::Irq, Register::SPSR_irq),
                 (OperatingMode::Und, Register::SPSR_und),
-            ]),
+            ]),*/
 
             increment_pc: true,
             thumb_modify_flags: true,
@@ -267,8 +294,14 @@ impl CPU {
             debug_cnt: 0,
             #[cfg(feature = "debug_instr")]
             bios_end: false,
+            #[cfg(feature = "debug_instr")]
+            instr_log: VecDeque::<(u32,u32)>::with_capacity(1000),
 
             last_fetched_bios_instr: 0,
+
+            arm_count: 0,
+            arm_cache_miss: 0,
+            thumb_count: 0,
         };
         //res.set_reg(13, 0x03007F00);
         //res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
@@ -296,7 +329,7 @@ impl CPU {
 
         let clocks = 
         //repeat(
-        if !self.read_flag(Flag::I) && self.interrupt_requested{
+            if !self.read_flag(Flag::I) && self.interrupt_requested{
                 self.halt = false;
                 //self.bus_set_reg_if(bus);
                 //println!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
@@ -310,6 +343,9 @@ impl CPU {
                 config::CPU_HALT_SLEEP_CYCLES // consume clock cycles; do nothing
             }
             else{
+                //if self.actual_pc == 0x03005e54{
+                //    panic!();
+                //}
                 let res = match self.read_flag(Flag::T) {
                     false => self.decode_execute_instruction_arm(bus),
                     true => self.decode_execute_instruction_thumb(bus)
@@ -328,15 +364,28 @@ impl CPU {
 
     // -------------- ARM INSTRUCTIONS -----------------
 
-    // completes one instruction. Returns number of clock cycles
-    fn decode_execute_instruction_arm(&mut self, bus: &mut Bus) -> u32 {
-        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
-        self.actual_pc = self.actual_pc & !0b11;
-        self.instr = bus.read_word(self.actual_pc as usize);
+    fn fetch_arm_instr(&mut self, bus: &mut Bus){
+        if self.pipeline_instr.is_empty(){
+            self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize));
+            self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize + 4));
+        }
+        self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize + 8));
+        self.instr = self.pipeline_instr.pop_front().unwrap();
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
                 bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::BIOS) as u32;
         }
+    }
+
+    // completes one instruction. Returns number of clock cycles
+    fn decode_execute_instruction_arm(&mut self, bus: &mut Bus) -> u32 {
+        self.arm_count += 1;
+
+        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
+        self.actual_pc = self.actual_pc & !0b11;
+        self.fetch_arm_instr(bus);
+        #[cfg(feature="debug_instr")]
+        self.log_instr();
         self.set_pc(self.actual_pc + 8);
 
         //if self.actual_pc == 0x80002f0  {
@@ -351,92 +400,118 @@ impl CPU {
 
         if self.check_cond(self.instr >> 28) {
             cur_cycles +=
-            // branch and exchange shares 0b000 with execute_dataproc. 
-            if (self.instr << 4) >> 8 == 0b000100101111111111110001{
-                self.debug("        BX");
-                self.execute_branch_exchange()
+
+            if false{
+            //if let Some(item) = self.arm_instr_cache.get(&self.instr){
+                //item(self, bus)
+                0
             }
-            // software interrupt
-            else if (self.instr >> 24) & 0b1111 == 0b1111 {
-                self.debug("        SWI");
-                self.execute_software_interrupt()
-            }
-            // multiply and multiply_long share 0b000 with execute_dataproc. 
-            else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
-                self.debug("        MUL, MLA");
-                self.execute_multiply()
-            }
-            else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
-                self.debug("        multiply long");
-                self.execute_multiply_long()
-            }
-            // load and store instructions
-            // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
-            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
-                self.debug("        SWP");
-                self.execute_swp(bus)
-            }
-            else if (self.instr >> 26) & 0b11 == 1 {
-                self.debug("        LDR, STR");
-                self.execute_ldr_str(bus)
-            }
-            else if (self.instr >> 25) & 0b111 == 0 && 
-                (((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
-                ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1)) {
-                    self.debug("        halfword_signed_transfer");
-                self.execute_halfword_signed_transfer(bus)
-            }
-            // msr and mrs
-            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
-                self.debug("        MRS");
-                self.execute_mrs_psr2reg()
-            } 
-            /*else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
-                self.debug("        MSR reg2psr");
-                self.execute_msr_reg2psr()
-            } */
-            //else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
-            else if ((self.instr >> 23) & 0b11111 == 0b00110 && (self.instr >> 20) & 0b11 == 0b10) 
-                || ((self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0b10 && (self.instr >> 4) & 0b111111111111 == 0b111100000000) {
-                self.debug("        MSR");
-                self.execute_msr()
-            } 
             else{
-                match (self.instr >> 25) & 0b111 {
-                    0b000 | 0b001 => {
-                        self.debug("        dataproc");
-                        self.execute_dataproc()
-                    },
-                    0b101 => {
-                        self.debug("        branch");
-                        self.execute_branch()
-                    },
-                    0b100 => {
-                        self.debug("        block data transfer");
-                        self.execute_block_data_transfer(bus)
-                    },
-                    _ => {
-                        print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
-                        0
-                    }
+                let fn_ptr = 
+                // branch and exchange shares 0b000 with execute_dataproc. 
+                if (self.instr << 4) >> 8 == 0b000100101111111111110001{
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        BX");
+                    CPU::execute_branch_exchange
                 }
+                // software interrupt
+                else if (self.instr >> 24) & 0b1111 == 0b1111 {
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        SWI");
+                    CPU::execute_software_interrupt
+                }
+                // multiply and multiply_long share 0b000 with execute_dataproc. 
+                else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        MUL, MLA");
+                    CPU::execute_multiply
+                }
+                else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        multiply long");
+                    CPU::execute_multiply_long
+                }
+                // load and store instructions
+                // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
+                else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        SWP");
+                    CPU::execute_swp
+                }
+                else if (self.instr >> 26) & 0b11 == 1 {
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        LDR, STR");
+                    CPU::execute_ldr_str
+                }
+                else if (self.instr >> 25) & 0b111 == 0 && 
+                    (((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
+                    ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1)) {
+                        #[cfg(feature = "debug_instr")]
+                        self.debug("        halfword_signed_transfer");
+                        CPU::execute_halfword_signed_transfer
+                }
+                // msr and mrs
+                else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        MRS");
+                    CPU::execute_mrs_psr2reg
+                } 
+                /*else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
+                    self.debug("        MSR reg2psr");
+                    self.execute_msr_reg2psr()
+                } */
+                //else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
+                else if ((self.instr >> 23) & 0b11111 == 0b00110 && (self.instr >> 20) & 0b11 == 0b10) 
+                    || ((self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0b10 && (self.instr >> 4) & 0b111111111111 == 0b111100000000) {
+                    #[cfg(feature = "debug_instr")]
+                    self.debug("        MSR");
+                    CPU::execute_msr
+                } 
+                else{
+                    match (self.instr >> 25) & 0b111 {
+                        0b000 | 0b001 => {
+                            #[cfg(feature = "debug_instr")]
+                            self.debug("        dataproc");
+                            CPU::execute_dataproc
+                        },
+                        0b101 => {
+                            #[cfg(feature = "debug_instr")]
+                            self.debug("        branch");
+                            CPU::execute_branch
+                        },
+                        0b100 => {
+                            #[cfg(feature = "debug_instr")]
+                            self.debug("        block data transfer");
+                            CPU::execute_block_data_transfer
+                        },
+                        _ => {
+                            CPU::execute_undefined_instr
+                        }
+                    }
+                };
+                self.arm_cache_miss += 1;
+                //self.arm_instr_cache.insert(self.instr, fn_ptr);
+                fn_ptr(self, bus)
             };
         } else {
             cur_cycles = 1;
+            #[cfg(feature = "debug_instr")]
             self.debug("cond check failed, no instruction execution");
         }
 
         if self.increment_pc {
             self.actual_pc += 0b100;
+            #[cfg(feature = "debug_instr")]
             self.debug(" increment pc\n");
         };
+        #[cfg(feature = "debug_instr")]
         self.debug("\n\n");
 
         cur_cycles
     }
 
     // ---------- branches
-    fn execute_branch(&mut self) -> u32 {
+    fn execute_branch(&mut self, _: &mut Bus) -> u32 {
         // link bit set
         if (self.instr >> 24) & 1 == 1 {
             self.set_reg(14, self.actual_pc + 4);
@@ -447,17 +522,19 @@ impl CPU {
             offset |= 0b111111 << 26;
         }
         self.actual_pc = (Wrapping(self.read_pc()) + Wrapping(offset)).0;
+        self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
 
-    fn execute_branch_exchange(&mut self) -> u32 {
+    fn execute_branch_exchange(&mut self, _: &mut Bus) -> u32 {
         assert!(!self.read_flag(Flag::T));
         let addr = self.read_reg(self.instr & 0b1111);
         if addr & 1 > 0 {
             self.set_flag(Flag::T, true);
         };
         self.actual_pc = (addr >> 1) << 1;
+        self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
@@ -465,7 +542,7 @@ impl CPU {
     // ---------- data processing
 
     // returns number of clock cycles
-    fn execute_dataproc(&mut self) -> u32 {
+    fn execute_dataproc(&mut self, _: &mut Bus) -> u32 {
         let mut cur_cycles =
             1 + self.process_reg_dest() + self.process_operand2() + self.process_operand1();
         //print!(" reg_dest: {}, operand1: {:x}, operand2: {:x}", self.reg_dest, self.operand1, self.operand2);
@@ -487,7 +564,7 @@ impl CPU {
             0b1101 => self.op_mov(),
             0b1110 => self.op_bic(),
             0b1111 => self.op_mvn(),
-            _ => 0,
+            _ => unreachable!(),
         };
 
         cur_cycles
@@ -574,8 +651,8 @@ impl CPU {
             );
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                let spsr = self.reg[*reg as usize];
+            if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                let spsr = self.reg[reg as usize];
                 self.set_cpsr(spsr);
             }
         }
@@ -598,8 +675,8 @@ impl CPU {
             );
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                let spsr = self.reg[*reg as usize];
+            if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                let spsr = self.reg[reg as usize];
                 self.set_cpsr(spsr);
             }
         }
@@ -757,8 +834,8 @@ impl CPU {
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                let spsr = self.reg[*reg as usize];
+            if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                let spsr = self.reg[reg as usize];
                 self.set_cpsr(spsr);
             }
         }
@@ -773,8 +850,8 @@ impl CPU {
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                let spsr = self.reg[*reg as usize];
+            if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                let spsr = self.reg[reg as usize];
                 self.set_cpsr(spsr);
             }
         }
@@ -784,10 +861,11 @@ impl CPU {
     fn _op_set_pc(&mut self, res: u32) {
         if self.reg_dest == Register::R15 as u32 {
             self.actual_pc = res;
+            self.pipeline_instr.clear();
             self.increment_pc = false;
             if self.dataproc_set_cond() {
-                if let Some(reg) = self.spsr_map.get(&self.op_mode) {
-                    let spsr = self.reg[*reg as usize];
+                if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                    let spsr = self.reg[reg as usize];
                     self.set_cpsr(spsr);
                 } else {
                     println!("s bit should not be set");
@@ -797,12 +875,12 @@ impl CPU {
     }
 
     // ---------- MRS and MSR
-    fn execute_mrs_psr2reg(&mut self) -> u32 {
+    fn execute_mrs_psr2reg(&mut self, _: &mut Bus) -> u32 {
         let reg = if (self.instr >> 22 & 1) == 0 {
             Register::CPSR
         } else {
-            match self.spsr_map.get(&self.op_mode) {
-                Some(&opmode) => opmode,
+            match self.spsr_map[self.op_mode as usize] {
+                Some(opmode) => opmode,
                 None => Register::CPSR,
             }
         };
@@ -821,14 +899,14 @@ impl CPU {
         1
     }*/
 
-    fn execute_msr(&mut self) -> u32 {
+    fn execute_msr(&mut self, _: &mut Bus) -> u32 {
         let R = (self.instr >> 22 & 1) > 0;
         let reg_dest = if !R {
             Register::CPSR
         } else {
             //println!("{} {:#034b}", self.op_mode as u32, self.reg[Register::CPSR as usize]);
-            match self.spsr_map.get(&self.op_mode) {
-                Some(&opmode) => opmode,
+            match self.spsr_map[self.op_mode as usize] {
+                Some(opmode) => opmode,
                 None => {
                     println!(
                         "msr called on R=1, but this mode has no SPSR {}",
@@ -871,7 +949,7 @@ impl CPU {
     }
 
     // ---------- multiplications
-    fn execute_multiply(&mut self) -> u32 {
+    fn execute_multiply(&mut self, _: &mut Bus) -> u32 {
         self.reg_dest = (self.instr >> 16) & 0b1111;
         self.operand1 = self.read_reg((self.instr >> 12) & 0b1111);
         self.operand2 = self.read_reg((self.instr >> 8) & 0b1111);
@@ -909,7 +987,7 @@ impl CPU {
         cur_cycles
     }
 
-    fn execute_multiply_long(&mut self) -> u32 {
+    fn execute_multiply_long(&mut self, _: &mut Bus) -> u32 {
         let reg_dest_hi = (self.instr >> 16) & 0b1111;
         let reg_dest_lo = (self.instr >> 12) & 0b1111;
         let operand2 = self.read_reg((self.instr >> 8) & 0b1111);
@@ -1046,6 +1124,7 @@ impl CPU {
                     res &= 0xfffffffc;
                     self.actual_pc = res;
                     // NOTE: may not be correct, maybe comment out
+                    self.pipeline_instr.clear();
                     self.increment_pc = false;
                     cycles += 2;
                 }
@@ -1101,7 +1180,7 @@ impl CPU {
         let S = (self.instr >> 6) & 1 == 1;
         let H = (self.instr >> 5) & 1 == 1;
 
-        let rotate = 8 * (addr & 1);
+        let rotate = (addr & 1) << 3;
         let addr = if H { addr as usize & !1 } else { addr as usize };
 
         let reg = (self.instr >> 12) & 0b1111;
@@ -1235,6 +1314,7 @@ impl CPU {
                         self.reg[reg as usize] &= 0xfffffffc;
                         // NOTE: may not be correct, maybe comment out
                         self.actual_pc = self.reg[reg as usize];
+                        self.pipeline_instr.clear();
                         self.increment_pc = false;
                     }
                 } else {
@@ -1254,7 +1334,12 @@ impl CPU {
         }
 
         if S && r15_appear && L {
-            self.set_cpsr(self.reg[self.spsr_map[&self.op_mode] as usize]);
+            if let Some(reg) = self.spsr_map[self.op_mode as usize]{
+                self.set_cpsr(self.reg[reg as usize]);
+            }
+            else{
+                println!("critical failure: no valid spsr register in execute_block_data_transfer")
+            }
         }
 
         if L {
@@ -1328,7 +1413,7 @@ impl CPU {
     // modifies self.operand2. returns number of extra cycles (0)
     fn process_immediate_rotate(&mut self) -> u32 {
         let cur = self.instr & 0b11111111;
-        let rotate = ((self.instr >> 8) & 0b1111) * 2;
+        let rotate = ((self.instr >> 8) & 0b1111) << 1;
         self.operand2 = cur.rotate_right(rotate);
         if rotate > 0 {
             self.shifter_carry = (self.operand2 >> 31) & 1;
@@ -1468,7 +1553,7 @@ impl CPU {
 
     // ------------- THUMB INSTRUCTIONS -----------
 
-    fn generate_arm_decode_table() -> Vec<fn(&mut CPU, &mut Bus) -> u32> {
+    fn generate_thumb_decode_table() -> Vec<fn(&mut CPU, &mut Bus) -> u32> {
         let mut res = Vec::<fn(&mut CPU, &mut Bus) -> u32>::with_capacity(256);
         for i in 0..256u32 {
             let instr = i << 8;
@@ -1503,7 +1588,7 @@ impl CPU {
                     0b1100 => CPU::execute_thumb_load_store_multiple,
                     0b1101 => CPU::execute_thumb_cond_branch,
                     0b1111 => CPU::execute_thumb_uncond_branch_link,
-                    _ => CPU::execute_thumb_undefined_instr,
+                    _ => CPU::execute_undefined_instr,
                 }
             };
             res.push(f);
@@ -1511,14 +1596,30 @@ impl CPU {
         res
     }
 
-    fn decode_execute_instruction_thumb(&mut self, bus: &mut Bus) -> u32 {
-        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
-        self.actual_pc = self.actual_pc & !0b01;
-        self.instr = bus.read_halfword(self.actual_pc as usize) as u32;
+    fn fetch_thumb_instr(&mut self, bus: &mut Bus){
+        if self.pipeline_instr.is_empty(){
+            let data = bus.read_halfword(self.actual_pc as usize) as u32;
+            self.pipeline_instr.push_back(data + (data << 16));
+            let data = bus.read_halfword(self.actual_pc as usize + 2) as u32;
+            self.pipeline_instr.push_back(data + (data << 16));
+        }
+        let data = bus.read_halfword(self.actual_pc as usize + 4) as u32;
+        self.pipeline_instr.push_back(data + (data << 16));
+        self.instr = self.pipeline_instr.pop_front().unwrap() as u16 as u32;
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
-                bus.read_halfword_raw(self.actual_pc as usize + 4, MemoryRegion::BIOS) as u32;
+                bus.read_word_raw(self.actual_pc as usize + 4, MemoryRegion::BIOS) as u32;
         }
+    }
+
+    fn decode_execute_instruction_thumb(&mut self, bus: &mut Bus) -> u32 {
+        self.thumb_count += 1;
+
+        // get rid of the trailing bits, these may be set to 1 but must always be treated as 0
+        self.actual_pc = self.actual_pc & !0b01;
+        self.fetch_thumb_instr(bus);
+        #[cfg(feature="debug_instr")]
+        self.log_instr();
         self.set_pc(self.actual_pc + 4);
 
         let mut cur_cycles = 0;
@@ -1531,7 +1632,7 @@ impl CPU {
         // for compatibility with thumb op instructions
         self.shifter_carry = 0;
 
-        cur_cycles += self.arm_instr_table[self.instr as usize >> 8](self, bus);
+        cur_cycles += self.thumb_instr_table[self.instr as usize >> 8](self, bus);
         /*if (self.instr >> 11) & 0b11111 == 0b00011 {
             self.debug("        thumb ADD SUB");
             self.execute_thumb_add_sub_imm3()
@@ -1625,7 +1726,7 @@ impl CPU {
         cur_cycles
     }
 
-    fn execute_thumb_undefined_instr(&mut self, _: &mut Bus) -> u32 {
+    fn execute_undefined_instr(&mut self, _: &mut Bus) -> u32 {
         print!(
             "Error undefined instruction {:#034b} at pc {}",
             self.instr, self.actual_pc
@@ -1905,6 +2006,7 @@ impl CPU {
                 }
                 self.actual_pc = (self.operand2 >> 1) << 1;
                 //print!(" bx from thumb");
+                self.pipeline_instr.clear();
                 self.increment_pc = false;
                 3
             }
@@ -2184,6 +2286,7 @@ impl CPU {
             if L {
                 let res = bus.read_word(addr);
                 self.actual_pc = res & 0xfffffffe;
+                self.pipeline_instr.clear();
                 self.increment_pc = false;
             } else {
                 let res = self.read_reg(14);
@@ -2261,6 +2364,7 @@ impl CPU {
             }
             let res = Wrapping(self.actual_pc + 4) + Wrapping(offset);
             self.actual_pc = res.0;
+            self.pipeline_instr.clear();
             self.increment_pc = false;
             3
         } else {
@@ -2278,6 +2382,7 @@ impl CPU {
         let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
         self.actual_pc = res.0;
         //print!(" actual_pc: {:#x}", self.actual_pc);
+        self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
@@ -2301,6 +2406,7 @@ impl CPU {
                 //print!(" value placed into R15: {:#010x}", offset);
                 self.set_reg(14, (self.actual_pc + 2) | 1);
                 self.actual_pc = offset.0;
+                self.pipeline_instr.clear();
                 self.increment_pc = false;
             }
         };
@@ -2308,9 +2414,9 @@ impl CPU {
         4
     }
 
-    fn execute_thumb_software_interrupt(&mut self, _: &mut Bus) -> u32 {
+    fn execute_thumb_software_interrupt(&mut self, _bus: &mut Bus) -> u32 {
         self.debug("        thumb SWI");
-        self.execute_software_interrupt()
+        self.execute_software_interrupt(_bus)
     }
 
     // ---------- interrupts and halting
@@ -2333,6 +2439,7 @@ impl CPU {
         let mut cpsr = self.reg[Register::CPSR as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;
         self.actual_pc = 0x18;
+        self.pipeline_instr.clear();
         self.increment_pc = false;
 
         // switch to arm
@@ -2350,7 +2457,7 @@ impl CPU {
         3
     }
 
-    fn execute_software_interrupt(&mut self) -> u32 {
+    fn execute_software_interrupt(&mut self, _: &mut Bus) -> u32 {
         self.reg[Register::R14_svc as usize] = if self.read_flag(Flag::T) {
             self.actual_pc + 2
         } else {
@@ -2359,6 +2466,7 @@ impl CPU {
         let mut cpsr = self.reg[Register::CPSR as usize];
         self.reg[Register::SPSR_svc as usize] = cpsr;
         self.actual_pc = 0x8;
+        self.pipeline_instr.clear();
         self.increment_pc = false;
 
         // switch to arm
@@ -2468,6 +2576,21 @@ impl CPU {
         }
     }
 
+    #[cfg(feature = "debug_instr")]
+    fn log_instr(&mut self) {
+        if self.instr_log.len() == 1000 {
+            self.instr_log.pop_front();
+        }
+        self.instr_log.push_back((self.actual_pc, self.instr));
+    }
+
+    #[cfg(feature = "debug_instr")]
+    pub fn print_instr_log(&self) {
+        for (pc, instr) in self.instr_log.iter(){
+            println!("pc: {:#x}, instr: {:#034b}", pc, instr);
+        }
+    }
+
     // ---------- read and set helpers
 
     fn read_pc(&self) -> u32 {
@@ -2504,7 +2627,7 @@ impl CPU {
 
     #[inline(always)]
     fn read_reg(&self, reg: u32) -> u32 {
-        let reg = self.reg_map[self.op_mode as usize][reg as usize];
+        let reg = self.cur_reg_map[reg as usize];
         self.reg[reg as usize]
     }
 
@@ -2534,5 +2657,6 @@ impl CPU {
                 OperatingMode::Sys
             }
         };
+        self.cur_reg_map = self.reg_map[self.op_mode as usize];
     }
 }

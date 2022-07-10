@@ -37,7 +37,7 @@ pub struct GBA {
     save_state: Vec<Vec<u8>>,
     save_state_updated: bool,
 
-    heap: BinaryHeap<Reverse<(u32, Workflow)>>,
+    //heap: BinaryHeap<Reverse<(u32, Workflow)>>,
     workflow_times: [(u32, Workflow); 5],
     time_until_non_cpu_execution: u32,
 
@@ -118,13 +118,13 @@ impl GBA {
             save_state,
             save_state_updated: false,
 
-            heap: BinaryHeap::from([
+            /*heap: BinaryHeap::from([
                 Reverse((0, Workflow::Timer)),
                 Reverse((0, Workflow::CPU)),
                 Reverse((0, Workflow::APU)),
                 Reverse((0, Workflow::PPU)),
                 Reverse((0, Workflow::Normaliser)),
-            ]),
+            ]),*/
             workflow_times: [
                 (0, Workflow::Timer),
                 (0, Workflow::CPU),
@@ -216,6 +216,7 @@ impl GBA {
                     self.workflow_times[3].0 += self.ppu.clock(&mut self.bus);
                     if self.ppu.buffer_ready {
                         self.on_new_buffer(current_time);
+                        //println!("interrupts: {:#034b}", self.bus.read_word_raw(0x200, crate::bus::MemoryRegion::IO));
                         return Ok(if self.last_finished_time > current_time {self.last_finished_time - current_time} else {0});
                     }
                 }
@@ -240,7 +241,7 @@ impl GBA {
                     }
                     #[cfg(feature = "debug_instr")]
                     {
-                        self.bus.cpu.debug_cnt += 50;
+                        self.bus.cpu.debug_cnt += 0;
                     }
 
                     // roughly every second in real-time, we want to normalize all the values in the array
@@ -350,6 +351,7 @@ impl GBA {
             } else {
                 self.ppu.frame_count_render = config::FRAME_RENDER_INTERVAL_SPEEDUP;
             }
+            println!("arm_count: {}, arm_cache_miss_ratio: {}, thumb_count: {}", self.bus.cpu.arm_count, self.bus.cpu.arm_cache_miss as f32 / self.bus.cpu.arm_count as f32, self.bus.cpu.thumb_count);
         }
         for i in 0..config::NUM_SAVE_STATES {
             if self.input_handler.save_requested[i] {

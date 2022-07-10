@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::mpsc::Sender};
 
 use crate::{
     bus::{Bus, MemoryRegion},
-    config,
+    config::{self, AUDIO_SAMPLE_CLOCKS},
 };
 use rubato::{FftFixedInOut, InterpolationParameters, InterpolationType, Resampler, SincFixedIn};
 
@@ -192,13 +192,13 @@ impl APU {
             2,
         )
         .unwrap();
-        let sound_out_buff_extern_size = 16 * 1024 * 1024 / config::AUDIO_SAMPLE_CHUNKS;
+        let sound_out_buff_extern_size = 16 * 1024 * 1024 / config::AUDIO_SAMPLE_CHUNKS / config::AUDIO_SAMPLE_CLOCKS as usize;
 
         println!(
             "sampler input required size: {}",
             sampler.input_frames_next()
         );
-        APU {
+        let res = APU {
             square_length: [0; 2],
             square_rate: [0; 2],
             square_envelope: [0; 2],
@@ -224,7 +224,10 @@ impl APU {
             sampler,
 
             extern_audio_enabled: true,
-        }
+        };
+        //println!("sampler out len: {}", res.sampler.output_frames_max());
+        //println!("sound_in_buff len: {}, sound_out_buff_len 0: {}, sound_out_buff_len 1: {}, sound_out_buff_len 2: {}", res.sound_in_buff[0].capacity(), res.sound_out_buff.capacity(), res.sound_out_buff[0].capacity(), res.sound_out_buff[0][0].capacity());
+        res
     }
 
     pub fn get_audio_buffer(&mut self) -> Option<SoundBufferIt> {
@@ -240,6 +243,9 @@ impl APU {
     }
 
     pub fn clear_buffer(&mut self) {
+        //if self.sound_out_buff_index > 0{
+        //    println!("sound out buff index: {}", self.sound_out_buff_index);
+        //}
         self.sound_out_buff_index = 0;
     }
 
@@ -423,6 +429,7 @@ impl APU {
                         None,
                     )
                     .unwrap();
+                    //println!("sound out buf len: {}", self.sound_out_buff[self.sound_out_buff_index][0].len());
                 self.sound_out_buff_index += 1;
             }
             self.sound_in_buff[0].clear();

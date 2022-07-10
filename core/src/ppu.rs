@@ -5,39 +5,54 @@ use crate::bus::{Bus, MemoryRegion};
 use std::{cmp, mem, num::Wrapping};
 
 #[derive(Clone, Copy)]
-pub struct Pixel(u8, u8, u8);
+pub struct Pixel(u16);
 
 impl Pixel {
-    pub fn new(r: u8, g: u8, b: u8) -> Pixel {
-        return Pixel(cmp::min(r, 31), cmp::min(g, 31), cmp::min(b, 31));
+    pub fn new_from_rgb(r: u8, g: u8, b: u8) -> Pixel {
+        return Pixel(cmp::min(r, 31) as u16 | ((cmp::min(g, 31) as u16) << 5) | ((cmp::min(b, 31) as u16) << 10));
+    }
+
+    pub fn new_from_u16(colour: u16) -> Pixel {
+        return Pixel(colour);
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
         (
-            self.0 as f32 / 31.,
-            self.1 as f32 / 31.,
-            self.2 as f32 / 31.,
+            self.get_r() as f32 / 31.,
+            self.get_g() as f32 / 31.,
+            self.get_b() as f32 / 31.,
         )
+    }
+
+    fn get_r(&self) -> u8 {
+        return (self.0 & 0b11111) as u8;
+    }
+
+    fn get_g(&self) -> u8 {
+        return ((self.0 >> 5) & 0b11111) as u8;
+    }
+
+    fn get_b(&self) -> u8 {
+        return ((self.0 >> 10) & 0b11111) as u8;
     }
 
     pub fn to_u8(&self) -> (u8, u8, u8) {
         (
-            self.0 << 3,
-            self.1 << 3,
-            self.2 << 3,
+            self.get_r() << 3,
+            self.get_g() << 3,
+            self.get_b() << 3,
         )
     }
 
     pub fn blend(pixel_front: Pixel, pixel_back: Pixel, a: u16, b: u16) -> Pixel {
-        Pixel::new(
-            ((pixel_front.0 as u16 * a + pixel_back.0 as u16 * b) >> 4) as u8,
-            ((pixel_front.1 as u16 * a + pixel_back.1 as u16 * b) >> 4) as u8,
-            ((pixel_front.2 as u16 * a + pixel_back.2 as u16 * b) >> 4) as u8,
+        Pixel::new_from_rgb(
+            ((pixel_front.get_r() as u16 * a + pixel_back.get_r() as u16 * b) >> 4) as u8,
+            ((pixel_front.get_g() as u16 * a + pixel_back.get_g() as u16 * b) >> 4) as u8,
+            ((pixel_front.get_b() as u16 * a + pixel_back.get_b() as u16 * b) >> 4) as u8,
         )
     }
 }
 
-#[derive(Clone)]
 pub struct ScreenBuffer {
     buffer: Box<[[Pixel; 240]; 160]>,
 }
@@ -45,7 +60,7 @@ pub struct ScreenBuffer {
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
         return ScreenBuffer {
-            buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
+            buffer: Box::new([[Pixel::new_from_u16(0); 240]; 160]),
         };
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
@@ -53,6 +68,16 @@ impl ScreenBuffer {
     }
     pub fn read_pixel(&self, row: usize, col: usize) -> Pixel {
         return self.buffer[row][col];
+    }
+}
+
+impl Clone for ScreenBuffer{
+    fn clone(&self) -> Self {
+        Self { buffer: self.buffer.clone() }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.buffer.copy_from_slice(&source.buffer[..]);
     }
 }
 
@@ -115,12 +140,12 @@ impl PPU {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: Box::new([Pixel::new(0, 0, 0); 240]),
+            cur_scanline: Box::new([Pixel::new_from_u16(0); 240]),
             cur_scanline_front: Box::new(
-                [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+                [(Pixel::new_from_u16(0), PixelType::Backdrop, WindowType::W_full); 240],
             ),
             cur_scanline_back: Box::new(
-                [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+                [(Pixel::new_from_u16(0), PixelType::Backdrop, WindowType::W_full); 240],
             ),
 
             window_scanlines: Box::new([[true; 240]; 4]),
@@ -340,12 +365,12 @@ impl PPU {
             match cur_bm {
                 0b10 => {
                     self.cur_scanline[i] =
-                        Pixel::blend(pixel1, Pixel::new(31, 31, 31), 0b10000 - bw_fade, bw_fade);
+                        Pixel::blend(pixel1, Pixel::new_from_rgb(31, 31, 31), 0b10000 - bw_fade, bw_fade);
                     continue;
                 }
                 0b11 => {
                     self.cur_scanline[i] =
-                        Pixel::blend(pixel1, Pixel::new(0, 0, 0), 0b10000 - bw_fade, bw_fade);
+                        Pixel::blend(pixel1, Pixel::new_from_u16(0), 0b10000 - bw_fade, bw_fade);
                     continue;
                 }
                 _ => {}
@@ -428,8 +453,8 @@ impl PPU {
         // if 0: 4bpp, if 1: 8bpp
         let density = is_affine || (bg_cnt >> 7) & 1 > 0;
         let wrapping = !is_affine || (bg_cnt >> 13) & 1 > 0;
-        let base_screenblock_addr = ((bg_cnt as usize >> 8) & 0b11111) * 2048;
-        let base_charblock_addr = ((bg_cnt as usize >> 2) & 0b11) * 0x4000;
+        let base_screenblock_addr = ((bg_cnt as usize >> 8) & 0b11111) << 11;
+        let base_charblock_addr = ((bg_cnt as usize >> 2) & 0b11) << 14;
 
         let x = 0 - bus.read_halfword_raw(0x10 + 4 * bg_num, MemoryRegion::IO);
         let y = 0 - bus.read_halfword_raw(0x12 + 4 * bg_num, MemoryRegion::IO);
@@ -442,7 +467,7 @@ impl PPU {
             let mut ox = j_rel;
             let mut oy = i_rel;
 
-            let (mut px, mut py, tile_addr);
+            let (mut px, mut py, mut tile_addr);
             let mut pal_bank = 0; // NOTE: pal_bank is unused for affine backgrounds
 
             if is_affine {
@@ -470,6 +495,9 @@ impl PPU {
                 }
 
                 let offset_screen_entry = (oy >> 3) * (w >> 3) + (ox >> 3);
+                //if base_screenblock_addr + offset_screen_entry as usize >= 0x18000{
+                //    println!("hi1")
+                //}
                 let screen_entry = bus.read_byte_raw(
                     base_screenblock_addr + offset_screen_entry as usize,
                     MemoryRegion::VRAM,
@@ -521,11 +549,19 @@ impl PPU {
 
                 tile_addr = base_charblock_addr
                     + (screen_entry as usize & 0b1111111111) * if density { 64 } else { 32 };
+                
+                tile_addr &= 0x1ffff;
+                if tile_addr >= 98304 {
+                    tile_addr -= 32768;
+                }
             }
             let offset_pixels = (py << 3) as usize + px as usize;
 
             let pal = if !density {
                 let cur_addr = tile_addr + (offset_pixels >> 1);
+                //if cur_addr >= 0x18000{
+                //    println!("hi2")
+                //}
                 if offset_pixels & 1 > 0 {
                     (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) >> 4) + pal_bank
                 } else {
@@ -533,6 +569,9 @@ impl PPU {
                 }
             } else {
                 let cur_addr = tile_addr + offset_pixels;
+                //if cur_addr >= 0x18000{
+                //    println!("hi3")
+                //}
                 bus.read_byte_raw(cur_addr, MemoryRegion::VRAM)
             };
 
@@ -666,6 +705,9 @@ impl PPU {
                             cur_addr += (oy as usize >> 3) * (128 - (w as usize >> 1)) << 3;
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
+                        //if cur_addr >= 0x18000{
+                        //    println!("hi4")
+                        //}
                         if offset_pixels & 1 > 0{
                             (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) >> 4) + pal_bank
                         }
@@ -680,6 +722,9 @@ impl PPU {
                             cur_addr += (oy as usize >> 3) * (128 - w as usize) << 3;
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
+                        if cur_addr >= 0x18000{
+                            println!("hi5")
+                        }
                         bus.read_byte_raw(cur_addr, MemoryRegion::VRAM)
                     };
                     let pixel = PPU::process_palette_colour(pal, !density, true, bus);
@@ -873,10 +918,8 @@ impl PPU {
     // ------- helper functions
 
     fn process_15bit_colour(halfword: u16) -> Pixel {
-        Pixel::new(
-            (halfword & 0b11111) as u8,
-            ((halfword >> 5) & 0b11111) as u8,
-            ((halfword >> 10) & 0b11111) as u8,
+        Pixel::new_from_u16(
+            halfword
         )
     }
 

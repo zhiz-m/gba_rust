@@ -46,3 +46,5 @@ pub const CPU_ITERATIONS_PER_SIMULATION: usize = 1;*/
 
 // lower is more accurate, higher allows faster emulation.
 pub const CPU_HALT_SLEEP_CYCLES: u32 = 32;
+
+pub const CPU_ARM_CACHE_SIZE_POW2: u32 = 10;

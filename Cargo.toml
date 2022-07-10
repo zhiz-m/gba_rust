@@ -2,15 +2,16 @@
 
 members = [
     "core",
+    "frontends/backend-only",
     "frontends/desktop-native",
-    "frontends/wasm",
+    "frontends/wasm"
 ]
 
 [profile.dev]
 overflow-checks = false
 
 [profile.release]
-lto = true
+#lto = true
 opt-level = 3
 
 [profile.release-lto]

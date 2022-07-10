@@ -1,4 +1,6 @@
 use std::hash::{BuildHasher, Hasher};
+
+use crate::{cpu::CPU, bus::Bus, config::CPU_ARM_CACHE_SIZE_POW2};
 pub struct FastHasher {
     state: usize,
 }
@@ -24,6 +26,36 @@ impl BuildHasher for FastHashBuilder {
 
     fn build_hasher(&self) -> Self::Hasher {
         FastHasher { state: 0 }
+    }
+}
+
+pub struct DumbHashMap<U: Clone>
+{
+    data: Vec<Option<(u32, U)>>,
+}
+
+impl<U: Clone + Copy> DumbHashMap<U>{
+    pub fn new() -> DumbHashMap<U>{
+        DumbHashMap { 
+            data: vec![None; 1 << CPU_ARM_CACHE_SIZE_POW2],
+        }
+    }
+
+    pub fn get(&self, key: &u32) -> Option<U> {
+        if let Some(item) = &self.data[DumbHashMap::<U>::hash(key)]{
+            if item.0 << 4 == key << 4{
+                return Some(item.1);
+            }
+        }
+        return None;
+    }
+
+    pub fn insert(&mut self, key: u32, val: U){
+        self.data[DumbHashMap::<U>::hash(&key)] = Some((key, val));
+    }
+
+    fn hash(key: &u32) -> usize {
+        ((key & 0xfffffff) >> (28 - CPU_ARM_CACHE_SIZE_POW2)) as usize
     }
 }
 

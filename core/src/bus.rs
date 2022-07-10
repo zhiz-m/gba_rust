@@ -34,11 +34,13 @@ pub enum MemoryRegion {
     Cartridge = 7,
     CartridgeSRAM = 8,
     Illegal = 9,
+    CartridgeUpper = 10,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum CartridgeType {
-    EEPROM,
+    EEPROM512,
+    EEPROM8192,
     SRAM,
     FLASH64,
     FLASH128,
@@ -59,7 +61,7 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
             0 => CartridgeType::SRAM,
             1 | 2 => CartridgeType::FLASH64,
             3 => CartridgeType::FLASH128,
-            4 => CartridgeType::EEPROM,
+            4 => CartridgeType::EEPROM8192,
             _ => unreachable!("logical error, invalid result from u8_search"),
         },
     }
@@ -68,7 +70,7 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
 pub struct Bus {
     mapped_mem: Vec<Vec<u8>>,
 
-    cartridge_type: CartridgeType,
+    pub cartridge_type: CartridgeType,
 
     // 0-2: cartridge command flags
     // 3: cartridge page number (for 218kb only, 0 or 1)
@@ -79,6 +81,9 @@ pub struct Bus {
     //     val=3: write single byte mode
     //     val=4: select page number mode
     cartridge_type_state: [u8; 7],
+    pub eeprom_is_read: bool,
+    pub eeprom_read_offset: usize,
+    pub eeprom_write_successful: bool,
 
     pub is_any_dma_active: bool,
     pub hblank_dma: bool,
@@ -135,7 +140,8 @@ impl Bus {
                     "FLASH" => CartridgeType::FLASH64,
                     "FLASH512" => CartridgeType::FLASH64,
                     "FLASH1M" => CartridgeType::FLASH128,
-                    "EEPROM" => CartridgeType::FLASH128,
+                    "EEPROM512" => CartridgeType::EEPROM512,
+                    "EEPROM8192" => CartridgeType::EEPROM8192,
                     _ => unreachable!(),
                 }
             }
@@ -153,6 +159,9 @@ impl Bus {
 
             cartridge_type,
             cartridge_type_state: [0; 7],
+            eeprom_is_read: false,
+            eeprom_read_offset: 0,
+            eeprom_write_successful: false,
 
             is_any_dma_active: false,
             hblank_dma: false,
@@ -255,7 +264,12 @@ impl Bus {
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
         let reg_if = self.read_halfword_raw(0x202, MemoryRegion::IO);
         let cur_reg_if = interrupt & self.read_halfword_raw(0x200, MemoryRegion::IO);
-        self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+        //self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+        self.mapped_mem[MemoryRegion::IO as usize][0x202] ^= (cur_reg_if & !(reg_if)) as u8;
+        self.mapped_mem[MemoryRegion::IO as usize][0x203] ^= ((cur_reg_if & !(reg_if)) >> 8) as u8;
+        self.mapped_mem[MemoryRegion::IO as usize][0x202] &= !0b10000000;
+        self.mapped_mem[MemoryRegion::IO as usize][0x203] &= !0b00100000;
+        self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
     }
 
     pub fn timer_clock(&mut self) {
@@ -364,8 +378,23 @@ impl Bus {
                     //self.cpu.last_fetched_bios_instr = (self.mapped_mem[region as usize][addr] as u32) << offset;
                     self.mapped_mem[region as usize][addr]
                 }
+            },
+            MemoryRegion::CartridgeUpper => {
+                if self.eeprom_write_successful && (addr == 0x1000000 || addr == 0x1ffff00) {
+                    self.eeprom_write_successful = false;
+                    1
+                }
+                else if (self.cartridge_type == CartridgeType::EEPROM512 || self.cartridge_type == CartridgeType::EEPROM8192) && (addr == 0x1000001 || addr == 0x1ffff01){
+                    0
+                }
+                else{
+                    self.mapped_mem[MemoryRegion::Cartridge as usize][addr]
+                }
             }
-            MemoryRegion::Illegal => 0,
+            MemoryRegion::Illegal => {
+                let range = (addr & 0b11) << 3;
+                (self.cpu.pipeline_instr.get(1).unwrap() >> range) as u8
+            },
             _ => self.mapped_mem[region as usize][addr],
         }
     }
@@ -394,7 +423,15 @@ impl Bus {
                             // current bit 1, incoming bit 1 -> result = 0
                             // current bit 1, incoming bit 0 -> result = 1
                             // current bit 0, incoming bit 1 -> result = 1
-                            self.mapped_mem[region as usize][addr] ^= val;
+                            /*self.mapped_mem[region as usize][addr] ^= val;
+                            self.mapped_mem[region as usize][0x202] &= !0b10000000;
+                            self.mapped_mem[region as usize][0x203] &= !0b00100000;
+                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+                            */
+                            //let old = self.mapped_mem[region as usize][addr];
+                            
+                            // only allow turning off interrupts through CPU
+                            self.mapped_mem[region as usize][addr] = (self.mapped_mem[region as usize][addr] ^ val) & self.mapped_mem[region as usize][addr];
                             self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
                             return;
                         }
@@ -514,7 +551,7 @@ impl Bus {
                         }
 
                         // special handling for direct sound FIFO insertions
-                        0xa0..=0xa7 => {
+                        /*0xa0..=0xa7 => {
                             let channel_num = (addr - 0xa0) >> 2;
                             if self.apu.direct_sound_fifo[channel_num].len() < 32 {
                                 self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
@@ -528,7 +565,7 @@ impl Bus {
                             }
                             // do not write to mem directly
                             return;
-                        }
+                        }*/
 
                         // special handling for inserting into wave sound channel bank
                         0x90..=0x9f => {
@@ -583,7 +620,7 @@ impl Bus {
             }
             MemoryRegion::Illegal => {
                 //println!("illegal memory write");
-            }
+            },
             _ => {
                 self.mapped_mem[region as usize][addr] = val;
             }
@@ -805,12 +842,19 @@ impl Bus {
                 }
                 ((addr & 0x3ff), MemoryRegion::OAM)
             }
-            8 | 9 => {
+            8 | 9 | 10 | 11 => {
                 if !is_read {
                     return (0, MemoryRegion::Illegal);
                 }
                 //(addr, MemoryRegion::Cartridge)
                 ((addr & 0x1ffffff), MemoryRegion::Cartridge)
+            },
+            12 | 13 => {
+                if !is_read {
+                    return (0, MemoryRegion::Illegal);
+                }
+                //(addr, MemoryRegion::Cartridge)
+                ((addr & 0x1ffffff), MemoryRegion::CartridgeUpper)
             }
             14 | 15 => {
                 /*match self.cartridge_type{
@@ -834,11 +878,10 @@ impl Bus {
             }
             _ => {
                 #[cfg(feature = "debug_instr")]
-                println!("illegal memory access: {:#x} {:#x}", addr, self.cpu.instr);
-                /*println!("");
-                for x in self.cpu.instr_debug_deque.iter(){
-                    println!("{}",x);
-                }*/
+                {
+                    println!("illegal memory access: {:#x} {:#x}", addr, self.cpu.instr);
+                    self.cpu.print_instr_log();
+                }
                 (0, MemoryRegion::Illegal)
             }
         }
