@@ -54,6 +54,7 @@ impl Frontend {
             .find(|x| x.is_some())
             .expect("no suitable stereo output device")
             .unwrap();
+        println!("audio device: {}", &audio_output_device.name().unwrap());
         Frontend {
             gl: None,
             window: None,

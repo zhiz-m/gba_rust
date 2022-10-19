@@ -100,7 +100,7 @@ impl GBA {
         let save_state = save_state.unwrap_or(vec![vec![0; 128 * 1024]; config::NUM_SAVE_STATES]);
         let initial_save_state = match save_state_bank {
             None => None,
-            Some(bank) => Some(save_state[bank - 1].as_slice()),
+            Some(bank) => Some(save_state[bank].as_slice()),
         };
 
         let res = GBA {

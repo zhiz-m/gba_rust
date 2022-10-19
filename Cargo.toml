@@ -6,6 +6,10 @@ members = [
     "frontends/wasm",
 ]
 
+default-members = [
+    "frontends/desktop-native"
+]
+
 [profile.dev]
 overflow-checks = false
 

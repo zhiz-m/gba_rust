@@ -21,15 +21,15 @@ struct Arguments {
     #[clap(short = 'o', long)]
     rom_path: String,
 
-    /// Path to .rustsav save file for ROM
+    /// (Optional) Path to .rustsav save file for ROM. Leave empty to use the default save directory, which is relative to the ROM path. 
     #[clap(short = 's', long)]
     rom_save_path: Option<String>,
 
-    /// Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]
+    /// (Optional) Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]. Leave empty for automatic detection. 
     #[clap(short, long)]
     cartridge_type_str: Option<String>,
 
-    /// Save bank to load from
+    /// Save bank to load from (integer; [0,4])
     #[clap(short = 'b', long)]
     save_state_bank: Option<usize>,
 }
@@ -39,7 +39,7 @@ fn main() {
     //let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
     //let rom_save_path = env::args().nth(2);
     //let cartridge_type_str = env::args().nth(3);
-    let bios_path = "./extern/GBA/gba_bios.bin";
+    let bios_path = env::var("GBA_RUST_BIOS_PATH").expect("Env variable GBA_RUST_BIOS_PATH not found");
 
     // screen buffer
     let (tx1, rx1) = mpsc::channel();
