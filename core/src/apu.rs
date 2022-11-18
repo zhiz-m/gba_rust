@@ -1,10 +1,9 @@
-use std::{collections::VecDeque, sync::mpsc::Sender};
-
 use crate::{
     bus::{Bus, MemoryRegion},
     config,
 };
-use rubato::{FftFixedInOut, InterpolationParameters, InterpolationType, Resampler, SincFixedIn};
+use log::{info, warn};
+use rubato::{FftFixedInOut, Resampler};
 
 // StereoTuple.0 is right, StereoTuple.1 is left
 struct StereoTuple(Option<i16>, Option<i16>);
@@ -32,46 +31,32 @@ impl StereoTuple {
     pub fn add_bias(&mut self, channel: usize, val: i16) {
         match channel {
             0 => {
-                self.0 = match self.0 {
-                    None => None,
-                    Some(cur) => Some(cur + val),
-                }
+                self.0 = self.0.map(|cur| cur + val);
             }
             1 => {
-                self.1 = match self.1 {
-                    None => None,
-                    Some(cur) => Some(cur + val),
-                }
+                self.1 = self.1.map(|cur| cur + val);
             }
             _ => unreachable!(),
         }
     }
-    pub fn multiply(&mut self, channel: usize, val: i16) {
+    /*pub fn multiply(&mut self, channel: usize, val: i16) {
         match channel {
             0 => {
-                self.0 = match self.0 {
-                    None => None,
-                    Some(cur) => Some(cur * val),
-                }
+                self.0 = self.0.map(|cur| cur * val);
             }
             1 => {
-                self.1 = match self.1 {
-                    None => None,
-                    Some(cur) => Some(cur * val),
-                }
+                self.1 = self.1.map(|cur| cur * val);
             }
             _ => unreachable!(),
         }
-    }
+    }*/
     pub fn clip(&mut self) {
-        self.0 = match self.0 {
-            None => None,
-            Some(val) => Some(std::cmp::max(0, std::cmp::min(0x3ff, val))),
-        };
-        self.1 = match self.1 {
-            None => None,
-            Some(val) => Some(std::cmp::max(0, std::cmp::min(0x3ff, val))),
-        };
+        self.0 = self
+            .0
+            .map(|val| std::cmp::max(0, std::cmp::min(0x3ff, val)));
+        self.1 = self
+            .1
+            .map(|val| std::cmp::max(0, std::cmp::min(0x3ff, val)));
     }
 }
 
@@ -142,7 +127,7 @@ impl<'a> Iterator for SoundBufferIt<'a> {
     }
 }
 
-pub struct APU {
+pub struct Apu {
     //  ------- square sound channels
     square_length: [u32; 2],
     square_rate: [u32; 2],
@@ -174,8 +159,8 @@ pub struct APU {
     pub extern_audio_enabled: bool,
 }
 
-impl APU {
-    pub fn new(sample_rate_output: usize) -> APU {
+impl Apu {
+    pub fn new(sample_rate_output: usize) -> Apu {
         /*let params = InterpolationParameters{
             sinc_len: 256,
             f_cutoff: 0.95,
@@ -194,11 +179,11 @@ impl APU {
         .unwrap();
         let sound_out_buff_extern_size = 16 * 1024 * 1024 / config::AUDIO_SAMPLE_CHUNKS;
 
-        println!(
+        info!(
             "sampler input required size: {}",
             sampler.input_frames_next()
         );
-        APU {
+        Apu {
             square_length: [0; 2],
             square_rate: [0; 2],
             square_envelope: [0; 2],
@@ -252,8 +237,8 @@ impl APU {
         if (snd_stat >> 7) & 1 > 0 {
             // sound enabled
             let snd_dmg_cnt = bus.read_halfword_raw(0x80, MemoryRegion::IO);
-            //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
-            //println!("bias: {:#018b}", bus.read_halfword_raw(0x4000088));
+            //info!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
+            //info!("bias: {:#018b}", bus.read_halfword_raw(0x4000088));
             let snd_ds_cnt = bus.read_halfword_raw(0x82, MemoryRegion::IO);
 
             let dmg_vol = [
@@ -338,7 +323,7 @@ impl APU {
                         0b01 => self.square_envelope[i] >> 1,
                         0b10 => self.square_envelope[i],
                         0b11 => {
-                            println!("sound channel 1-4 has a volume of 0b11: forbidden");
+                            warn!("sound channel 1-4 has a volume of 0b11: forbidden");
                             self.square_envelope[i]
                         }
                         _ => unreachable!(),
@@ -369,8 +354,8 @@ impl APU {
                     continue;
                 }
                 // sound right and left channels
-                for j in 0..2 {
-                    if !enable_right_left[j] {
+                for (j, item) in enable_right_left.iter().enumerate() {
+                    if *item {
                         continue;
                     }
                     let final_sample = match (snd_ds_cnt >> (2 + j)) & 1 {
@@ -378,11 +363,11 @@ impl APU {
                         1 => self.direct_sound_fifo_cur[i],
                         _ => unreachable!(),
                     };
-                    if final_sample as i16 != 0 {
-                        //println!("playing from direct sound: {:#x}, ds_cnt: {:#018b}, channel: {}, snd_bias: {:#018b}", final_sample, snd_ds_cnt, i, bus.read_halfword(0x04000088));
+                    /*if final_sample as i16 != 0 {
+                        //info!("playing from direct sound: {:#x}, ds_cnt: {:#018b}, channel: {}, snd_bias: {:#018b}", final_sample, snd_ds_cnt, i, bus.read_halfword(0x04000088));
                     } else {
-                        //println!("direct sound zero");
-                    }
+                        //info!("direct sound zero");
+                    }*/
                     cur_tuple.add(j, (final_sample as i16) * 4);
                 }
             }
@@ -393,7 +378,7 @@ impl APU {
 
             // process bias
             let snd_bias = bus.read_word_raw(0x88, MemoryRegion::IO);
-            let bias = (snd_bias >> 0) & 0b1111111111;
+            let bias = snd_bias & 0b1111111111;
             cur_tuple.add_bias(0, bias as i16);
             cur_tuple.add_bias(1, bias as i16);
 
@@ -401,7 +386,7 @@ impl APU {
             cur_tuple.clip();
         }
         //else{
-        //    println!("sound is off");
+        //    info!("sound is off");
         //}
 
         // output channel 0 is left not right
@@ -435,7 +420,7 @@ impl APU {
     fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &mut Bus) {
         let snd_cur_cnt_l = bus.read_byte_raw(0x70, MemoryRegion::IO);
         if snd_cur_cnt_l >> 7 == 0 {
-            //println!("wave channel disabled");
+            //info!("wave channel disabled");
             return;
         }
 
@@ -444,7 +429,7 @@ impl APU {
             snd_dmg_cnt as i16 & 0b111,
             (snd_dmg_cnt >> 4) as i16 & 0b111,
         ];
-        //println!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
+        //info!("snd_dmg_cnt: {:#018b}", snd_dmg_cnt);
         let snd_ds_cnt = bus.read_halfword_raw(0x82, MemoryRegion::IO);
         let enable_right_left = [(snd_dmg_cnt >> 10) & 1 > 0, (snd_dmg_cnt >> 14) & 1 > 0];
         // sound is not enabled on any channel (left or right)
@@ -465,7 +450,7 @@ impl APU {
         let mut final_wave_vol = if true {
             self.wave_bank[bank as usize][((ind & 31) >> 1) as usize] as i16
         } else {
-            //println!("wave bank is at its end, {:#010b}", snd_cur_cnt_l);
+            //info!("wave bank is at its end, {:#010b}", snd_cur_cnt_l);
             0
         };
 
@@ -485,7 +470,7 @@ impl APU {
             0b01 => final_wave_vol >> 1,
             0b10 => final_wave_vol,
             0b11 => {
-                println!("sound channel 1-4 has a volume of 0b11: forbidden");
+                warn!("sound channel 1-4 has a volume of 0b11: forbidden");
                 final_wave_vol
             }
             _ => unreachable!(),
@@ -509,7 +494,7 @@ impl APU {
                 continue;
             }
             if final_wave_vol != 0 {
-                //println!("playing wave sample: {:#018b}", final_wave_vol * dmg_vol[j]);
+                //info!("playing wave sample: {:#018b}", final_wave_vol * dmg_vol[j]);
             }
             cur_tuple.add(j, final_wave_vol * dmg_vol[j]);
         }

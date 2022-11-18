@@ -135,12 +135,12 @@ impl Frontend {
                                 }
                             }
                             Err(why) => {
-                                //println!("audio stream err: {}", why.to_string())
+                                println!("audio stream err: {}", why.to_string())
                             }
                         }
                     }
                 },
-                move |err| println!("err: {}", err.to_string()),
+                move |err| println!("err: {}", err),
             )
             .unwrap();
 
@@ -192,19 +192,19 @@ impl Frontend {
             if let Some(Button::Keyboard(key)) = e.press_args() {
                 if let Some(key_input) = self.key_map.get(&key) {
                     if let Err(why) = self.key_sender.send((*key_input, true)) {
-                        println!("   keybuf sending error: {}", why.to_string());
+                        println!("   keybuf sending error: {}", why);
                     }
                 }
             }
             if let Some(Button::Keyboard(key)) = e.release_args() {
                 if let Some(key_input) = self.key_map.get(&key) {
                     if let Err(why) = self.key_sender.send((*key_input, false)) {
-                        println!("   keybuf sending error: {}", why.to_string());
+                        println!("   keybuf sending error: {}", why);
                     }
                 }
             }
             return Ok(true);
         }
-        return Ok(false);
+        Ok(false)
     }
 }

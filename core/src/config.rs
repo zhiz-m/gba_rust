@@ -11,7 +11,7 @@ pub const CPU_EXECUTION_INTERVAL_US: u64 =
 // number of frames to pass before recording new FPS value
 pub const FPS_RECORD_INTERVAL: u32 = 120;
 
-pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::SRAM;
+pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::Sram;
 
 // note: the below memory addresses cannot be accessed by the user.
 

@@ -1,5 +1,3 @@
-use std::sync::mpsc::Receiver;
-
 use crate::{bus::Bus, config};
 
 #[derive(Clone, Copy)]

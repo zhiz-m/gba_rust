@@ -1,13 +1,15 @@
 #![allow(non_camel_case_types)]
 
+use log::warn;
+
 use crate::bus::{Bus, ChunkSize, MemoryRegion};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TimingMode {
     Immediate,
     VBlank,
     HBlank,
-    FIFO,
+    Fifo,
 }
 
 #[derive(Clone)]
@@ -60,14 +62,14 @@ impl DMA_Channel {
                 //dma_cnt_upper &= !(1 << 7);
                 //bus.store_byte_raw(0x040000bb + 12 * channel_no, dma_cnt_upper);
                 assert!(dest_addr == 0x040000a0 || dest_addr == 0x040000a4);
-                //println!("dma fifo addr: {:#x}", src_addr)
+                //info!("dma fifo addr: {:#x}", src_addr)
                 num_transfers = 4;
-                TimingMode::FIFO
+                TimingMode::Fifo
             }
             _ => unreachable!(),
         };
-        if timing_mode == TimingMode::FIFO {
-            //println!("dma channel {}, src_addr: {:#x}, dest addr: {:#x}, num_transfers: {:#x}", channel_no, src_addr, dest_addr, dma_cnt as u16);
+        if timing_mode == TimingMode::Fifo {
+            //info!("dma channel {}, src_addr: {:#x}, dest addr: {:#x}, num_transfers: {:#x}", channel_no, src_addr, dest_addr, dma_cnt as u16);
         }
         //assert!(!is_enabled || dma_cnt as u16 > 0);
         DMA_Channel {
@@ -102,10 +104,10 @@ impl DMA_Channel {
                     TimingMode::Immediate => true,
                     TimingMode::HBlank => bus.hblank_dma,
                     TimingMode::VBlank => bus.vblank_dma,
-                    TimingMode::FIFO => {
+                    TimingMode::Fifo => {
                         match self.channel_no {
                             0 => {
-                                println!("FIFO channel is invalid for DMA channel_no of 0");
+                                warn!("FIFO channel is invalid for DMA channel_no of 0");
                                 false
                             }
                             // sound FIFO mode
@@ -117,7 +119,7 @@ impl DMA_Channel {
                             3 => {
                                 bus.hblank_dma && {
                                     let vcount = bus.read_byte_raw(0x5, MemoryRegion::IO);
-                                    vcount >= 2 && vcount < 162
+                                    (2..162).contains(&vcount)
                                 }
                             }
                             _ => unreachable!(),
@@ -141,7 +143,7 @@ impl DMA_Channel {
         if self.is_repeating {
             // if this is a repeat run, need to re-load the number of transfers
             self.num_transfers = match self.timing_mode {
-                TimingMode::FIFO => 4,
+                TimingMode::Fifo => 4,
                 _ => dma_cnt as u16,
             };
             if self.repeat_reset_dest {
@@ -154,7 +156,7 @@ impl DMA_Channel {
         self.repeat_reset_dest = false;
 
         self.dest_increment = match self.timing_mode {
-            TimingMode::FIFO => 0,
+            TimingMode::Fifo => 0,
             _ => match (dma_cnt >> 0x15) & 0b11 {
                 0b00 => 1,
                 0b01 => !0, // -1
@@ -178,7 +180,7 @@ impl DMA_Channel {
             _ => unreachable!(),
         };
 
-        if self.timing_mode != TimingMode::FIFO {
+        if self.timing_mode != TimingMode::Fifo {
             //println!("non-fifo dma dest_addr: {:#x}", self.dest_addr);
             self.chunk_size = match (dma_cnt >> 0x1a) & 1 > 0 {
                 true => ChunkSize::Word,
@@ -193,7 +195,7 @@ impl DMA_Channel {
 
         self.raise_interrupt = (dma_cnt >> 0x1e) & 1 > 0;
 
-        self.is_repeating = self.timing_mode == TimingMode::FIFO
+        self.is_repeating = self.timing_mode == TimingMode::Fifo
             || (self.timing_mode != TimingMode::Immediate && (dma_cnt >> 0x19) & 1 > 0);
 
         if self.channel_no != 1 && self.channel_no != 2 {

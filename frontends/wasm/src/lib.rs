@@ -2,11 +2,9 @@ mod util;
 
 use std::{cell::RefCell, rc::Rc};
 
-use gba_core::{ScreenBuffer, GBA};
-use js_sys::Uint8ClampedArray;
-use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{console, AudioContext, Document, Element, EventListener};
 use util::HtmlState;
+use wasm_bindgen::{prelude::*, JsCast};
+use web_sys::AudioContext;
 // When the `wee_alloc` feature is enabled, this uses `wee_alloc` as the global
 // allocator.
 //
@@ -53,13 +51,27 @@ pub fn main_js() -> Result<(), JsValue> {
     util::configure_file_input("save_state_input", save_state.clone())?;
     util::configure_int_input("save_bank_input", save_bank.clone())?;
 
-    let html_state = HtmlState{
+    let html_state = HtmlState {
         raw_screen_buffer: vec![0u8; 4 * 320 * 480],
-        fps_label: document.get_element_by_id("fps_label").unwrap().dyn_into::<web_sys::HtmlDivElement>()?,
-        canvas_context: canvas.get_context("2d")?.unwrap().dyn_into::<web_sys::CanvasRenderingContext2d>()?,
+        fps_label: document
+            .get_element_by_id("fps_label")
+            .unwrap()
+            .dyn_into::<web_sys::HtmlDivElement>()?,
+        canvas_context: canvas
+            .get_context("2d")?
+            .unwrap()
+            .dyn_into::<web_sys::CanvasRenderingContext2d>()?,
     };
     let gba = Rc::new(RefCell::new(None));
-    util::configure_reset_button("reset_button", gba, bios, save_state, save_bank, rom, Rc::new(RefCell::new(html_state)))?;
+    util::configure_reset_button(
+        "reset_button",
+        gba,
+        bios,
+        save_state,
+        save_bank,
+        rom,
+        Rc::new(RefCell::new(html_state)),
+    )?;
 
     Ok(())
 }

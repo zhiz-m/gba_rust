@@ -2,7 +2,7 @@
 
 use crate::bus::{Bus, MemoryRegion};
 
-use std::{cmp, mem, num::Wrapping};
+use std::{cmp, num::Wrapping};
 
 #[derive(Clone, Copy)]
 pub struct Pixel(u8, u8, u8);
@@ -76,8 +76,8 @@ enum PixelType {
     Sprite_blend = 6,
 }
 
-pub struct PPU {
-    clock_cur: u32,
+pub struct Ppu {
+    //clock_cur: u32,
 
     buffer: ScreenBuffer,
     pub buffer_ready: bool,
@@ -105,10 +105,10 @@ pub struct PPU {
     pub frame_count_render: u32,
 }
 
-impl PPU {
-    pub fn new() -> PPU {
-        PPU {
-            clock_cur: 960, // clocks needed to process first scanline
+impl Ppu {
+    pub fn new() -> Ppu {
+        Ppu {
+            //clock_cur: 960, // clocks needed to process first scanline
 
             buffer: ScreenBuffer::new(),
             buffer_ready: false,
@@ -243,14 +243,14 @@ impl PPU {
         //self.cur_scanline.iter_mut().for_each(|x| *x = PPU::process_15bit_colour(backdrop_colour));
         self.cur_scanline_back.iter_mut().for_each(|x| {
             *x = (
-                PPU::process_15bit_colour(backdrop_colour),
+                Ppu::process_15bit_colour(backdrop_colour),
                 PixelType::Backdrop,
                 WindowType::W_full,
             )
         });
         self.cur_scanline_front.iter_mut().for_each(|x| {
             *x = (
-                PPU::process_15bit_colour(backdrop_colour),
+                Ppu::process_15bit_colour(backdrop_colour),
                 PixelType::Backdrop,
                 WindowType::W_full,
             )
@@ -372,8 +372,8 @@ impl PPU {
         for i in 0..240 {
             self.update_cur_scanline_bg(
                 i,
-                Some(PPU::process_15bit_colour(
-                    bus.read_halfword_raw(addr + i * 2, MemoryRegion::VRAM),
+                Some(Ppu::process_15bit_colour(
+                    bus.read_halfword_raw(addr + i * 2, MemoryRegion::Vram),
                 )),
                 PixelType::BG_0,
             );
@@ -403,8 +403,8 @@ impl PPU {
         for i in 0..240 {
             self.update_cur_scanline_bg(
                 i as usize,
-                PPU::process_palette_colour(
-                    bus.read_byte_raw(addr + i, MemoryRegion::VRAM),
+                Ppu::process_palette_colour(
+                    bus.read_byte_raw(addr + i, MemoryRegion::Vram),
                     false,
                     false,
                     bus,
@@ -472,7 +472,7 @@ impl PPU {
                 let offset_screen_entry = (oy >> 3) * (w >> 3) + (ox >> 3);
                 let screen_entry = bus.read_byte_raw(
                     base_screenblock_addr + offset_screen_entry as usize,
-                    MemoryRegion::VRAM,
+                    MemoryRegion::Vram,
                 );
                 px = ox & 0b111;
                 py = oy & 0b111;
@@ -503,7 +503,7 @@ impl PPU {
                 };
                 let screen_entry = bus.read_halfword_raw(
                     cur_screenblock_addr + ((offset_screen_entry as usize) << 1),
-                    MemoryRegion::VRAM,
+                    MemoryRegion::Vram,
                 );
 
                 // relative to current tile
@@ -527,20 +527,20 @@ impl PPU {
             let pal = if !density {
                 let cur_addr = tile_addr + (offset_pixels >> 1);
                 if offset_pixels & 1 > 0 {
-                    (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) >> 4) + pal_bank
+                    (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) >> 4) + pal_bank
                 } else {
-                    (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) & 0b1111) + pal_bank
+                    (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) & 0b1111) + pal_bank
                 }
             } else {
                 let cur_addr = tile_addr + offset_pixels;
-                bus.read_byte_raw(cur_addr, MemoryRegion::VRAM)
+                bus.read_byte_raw(cur_addr, MemoryRegion::Vram)
             };
 
             //if self.cur_line == 10 && bg_num == 0 {
             //    println!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword_raw(0x05000000 + pal as usize * 2));
             //}
 
-            let pixel = PPU::process_palette_colour(pal, !density, false, bus);
+            let pixel = Ppu::process_palette_colour(pal, !density, false, bus);
             self.update_cur_scanline_bg(j as usize, pixel, pixel_type);
         }
     }
@@ -579,13 +579,13 @@ impl PPU {
 
         for k in (0..128).rev() {
             // process sprite attributes
-            let attr0 = bus.read_halfword_raw(k * 8, MemoryRegion::OAM);
+            let attr0 = bus.read_halfword_raw(k * 8, MemoryRegion::Oam);
             let obj_mode = (attr0 >> 8) & 0b11;
             if obj_mode == 0b10 {
                 // no rendering
                 continue;
             }
-            let attr2 = bus.read_halfword_raw(k * 8 + 4, MemoryRegion::OAM);
+            let attr2 = bus.read_halfword_raw(k * 8 + 4, MemoryRegion::Oam);
             let cur_p = ((attr2 >> 10) & 0b11) as u8;
             if !process_win_obj && cur_p != self.cur_priority {
                 continue;
@@ -599,7 +599,7 @@ impl PPU {
             let density = (attr0 >> 13) & 1 > 0; // 0 means 4 bits per pixel, 1 means 8 bits per pixel
             let pal_bank = ((attr2 >> 12) << 4) as u8;
 
-            let attr1 = bus.read_halfword_raw(k * 8 + 2, MemoryRegion::OAM);
+            let attr1 = bus.read_halfword_raw(k * 8 + 2, MemoryRegion::Oam);
             let base_tile_index = attr2 & 0b1111111111;
             if self.disp_cnt & 0b111 >= 3 && base_tile_index < 512 {
                 continue; // ignore lower charblock on bitmap modes
@@ -612,10 +612,10 @@ impl PPU {
             let affine = (attr0 >> 8) & 1 > 0;
             let affine_is_double = (attr0 >> 9) > 0;
             let affine_obj_addr = ((attr1 >> 9) & 0b11111) as usize * 32;
-            let pa = bus.read_halfword_raw(affine_obj_addr + 6, MemoryRegion::OAM);
-            let pb = bus.read_halfword_raw(affine_obj_addr + 14, MemoryRegion::OAM);
-            let pc = bus.read_halfword_raw(affine_obj_addr + 22, MemoryRegion::OAM);
-            let pd = bus.read_halfword_raw(affine_obj_addr + 30, MemoryRegion::OAM);
+            let pa = bus.read_halfword_raw(affine_obj_addr + 6, MemoryRegion::Oam);
+            let pb = bus.read_halfword_raw(affine_obj_addr + 14, MemoryRegion::Oam);
+            let pc = bus.read_halfword_raw(affine_obj_addr + 22, MemoryRegion::Oam);
+            let pd = bus.read_halfword_raw(affine_obj_addr + 30, MemoryRegion::Oam);
 
             let y_flip = (attr1 >> 13) & 1 > 0;
             let x_flip = (attr1 >> 12) & 1 > 0;
@@ -667,10 +667,10 @@ impl PPU {
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
                         if offset_pixels & 1 > 0{
-                            (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) >> 4) + pal_bank
+                            (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) >> 4) + pal_bank
                         }
                         else{
-                            (bus.read_byte_raw(cur_addr, MemoryRegion::VRAM) & 0b1111) + pal_bank
+                            (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) & 0b1111) + pal_bank
                         }
                     }
                     // 8 bits per pixel
@@ -680,9 +680,9 @@ impl PPU {
                             cur_addr += (oy as usize >> 3) * (128 - w as usize) << 3;
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
-                        bus.read_byte_raw(cur_addr, MemoryRegion::VRAM)
+                        bus.read_byte_raw(cur_addr, MemoryRegion::Vram)
                     };
-                    let pixel = PPU::process_palette_colour(pal, !density, true, bus);
+                    let pixel = Ppu::process_palette_colour(pal, !density, true, bus);
 
                     let mut tx = j as usize + x as usize;
                     //if affine && affine_is_double{
@@ -894,7 +894,7 @@ impl PPU {
             addr += 0x200;
         }
         let colour = bus.read_halfword_raw(addr as usize, MemoryRegion::Palette);
-        Some(PPU::process_15bit_colour(colour))
+        Some(Ppu::process_15bit_colour(colour))
     }
 
     // -------- old code, kept for reference

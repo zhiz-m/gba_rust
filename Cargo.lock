@@ -691,6 +691,7 @@ checksum = "3a471a38ef8ed83cd6e40aa59c1ffe17db6855c18e3604d9c4ed8c08ebc28678"
 name = "gba-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rubato",
 ]
 
@@ -701,6 +702,7 @@ dependencies = [
  "clap",
  "cpal",
  "gba-core",
+ "log",
  "piston",
  "piston2d-graphics",
  "piston2d-opengl_graphics",

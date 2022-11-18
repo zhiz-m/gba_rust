@@ -7,11 +7,11 @@ use gba_core;
 
 use std::{
     env,
-    fs::{self, read, File},
-    io::{BufReader, Read},
+    fs::{self, read},
     path::Path,
     sync::mpsc,
-    thread, time::{SystemTime, UNIX_EPOCH, Duration},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Parser)]
@@ -21,11 +21,11 @@ struct Arguments {
     #[clap(short = 'o', long)]
     rom_path: String,
 
-    /// (Optional) Path to .rustsav save file for ROM. Leave empty to use the default save directory, which is relative to the ROM path. 
+    /// (Optional) Path to .rustsav save file for ROM. Leave empty to use the default save directory, which is relative to the ROM path.
     #[clap(short = 's', long)]
     rom_save_path: Option<String>,
 
-    /// (Optional) Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]. Leave empty for automatic detection. 
+    /// (Optional) Type of cartridge: [SRAM_V, FLASH_V, FLASH512_V, FLASH1M_V, EEPROM_V]. Leave empty for automatic detection.
     #[clap(short, long)]
     cartridge_type_str: Option<String>,
 
@@ -39,7 +39,8 @@ fn main() {
     //let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
     //let rom_save_path = env::args().nth(2);
     //let cartridge_type_str = env::args().nth(3);
-    let bios_path = env::var("GBA_RUST_BIOS_PATH").expect("Env variable GBA_RUST_BIOS_PATH not found");
+    let bios_path =
+        env::var("GBA_RUST_BIOS_PATH").expect("Env variable GBA_RUST_BIOS_PATH not found");
 
     // screen buffer
     let (tx1, rx1) = mpsc::channel();
@@ -55,7 +56,7 @@ fn main() {
     let bios_bin = read(bios_path).expect("did not find BIOS file");
     let rom_bin = read(&cli.rom_path).expect("did not find ROM");
     let rom_save_path = match cli.rom_save_path {
-        Some(path) => path.to_string(),
+        Some(path) => path,
         None => {
             let save_state_dir = Path::new(&cli.rom_path)
                 .parent()
@@ -75,8 +76,8 @@ fn main() {
                 "save_state_dir: {}, rom_path_filename: {}",
                 save_state_dir, rom_path_filename
             );
-            let rom_save_path = if rom_path_filename.contains(".") {
-                let pos = rom_path_filename.rfind(".").unwrap();
+            let rom_save_path = if rom_path_filename.contains('.') {
+                let pos = rom_path_filename.rfind('.').unwrap();
                 if pos != 0 {
                     format!("{}{}", &rom_path_filename[0..pos], config::SAVE_FILE_SUF)
                 } else {
@@ -105,15 +106,27 @@ fn main() {
     );
 
     thread::spawn(move || {
-        gba.init(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64);
+        gba.init(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64,
+        );
         loop {
-            let sleep_micros = gba.process_frame(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros() as u64).unwrap();
+            let sleep_micros = gba
+                .process_frame(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_micros() as u64,
+                )
+                .unwrap();
             thread::sleep(Duration::from_micros(sleep_micros));
 
             // video
             if let Some(screen_buffer) = gba.get_screen_buffer() {
                 if let Err(why) = tx1.send(screen_buffer.clone()) {
-                    println!("   screenbuf sending error: {}", why.to_string());
+                    println!("   screenbuf sending error: {}", why);
                 }
             }
 

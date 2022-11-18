@@ -1,10 +1,9 @@
-use gba_core::{marshall_save_state, ScreenBuffer, GBA, NUM_SAVE_STATES};
-use js_sys::Uint8ClampedArray;
+use gba_core::{marshall_save_state, GBA, NUM_SAVE_STATES};
 use std::{cell::RefCell, rc::Rc};
-use wasm_bindgen::{prelude::*, JsCast, Clamped};
-use web_sys::{console, AudioContext, Document, Element, EventListener, HtmlCanvasElement, CanvasRenderingContext2d, HtmlDivElement};
+use wasm_bindgen::{prelude::*, Clamped, JsCast};
+use web_sys::{CanvasRenderingContext2d, HtmlDivElement};
 
-pub struct HtmlState{
+pub struct HtmlState {
     pub raw_screen_buffer: Vec<u8>,
     pub fps_label: HtmlDivElement,
     pub canvas_context: CanvasRenderingContext2d,
@@ -28,7 +27,7 @@ pub fn configure_file_input(id: &str, output: Rc<RefCell<Option<Vec<u8>>>>) -> R
             .unwrap();
 
         let file_reader = web_sys::FileReader::new().unwrap();
-        if let Some(file) = &element.files().unwrap().get(0){
+        if let Some(file) = &element.files().unwrap().get(0) {
             file_reader.read_as_array_buffer(&file).unwrap();
             let output_cloned = Rc::clone(&output);
             let onload = Closure::wrap(Box::new(move |event: web_sys::Event| {
@@ -122,15 +121,19 @@ pub fn configure_reset_button(
     Ok(())
 }
 
-fn schedule_gba(gba_rc: Rc<RefCell<Option<GBA>>>, time_micros: u64, html_state: Rc<RefCell<HtmlState>>) -> Result<(), JsValue> {
+fn schedule_gba(
+    gba_rc: Rc<RefCell<Option<GBA>>>,
+    time_micros: u64,
+    html_state: Rc<RefCell<HtmlState>>,
+) -> Result<(), JsValue> {
     let window = web_sys::window().unwrap();
     let closure = Closure::wrap(Box::new(move |_: web_sys::Event| {
-        if let Some(gba) = gba_rc.borrow_mut().as_mut(){
+        if let Some(gba) = gba_rc.borrow_mut().as_mut() {
             let html_state = html_state.clone();
             let mut html_state_inner = html_state.borrow_mut();
 
             //console::log_1(&"gba_frame_start".into());
-            if !gba.has_started(){
+            if !gba.has_started() {
                 gba.init(time_micros);
             }
             let time_micros = (js_sys::Date::now() * 1000.) as u64;
@@ -139,37 +142,42 @@ fn schedule_gba(gba_rc: Rc<RefCell<Option<GBA>>>, time_micros: u64, html_state: 
             //console::log_2(&"frame time ms:".into(), &(time_micros2-time_micros).into());
 
             // video
-            if let Some(screen_buffer) = gba.get_screen_buffer(){
-                for i in 0..320{
-                    for j in 0..480{
+            if let Some(screen_buffer) = gba.get_screen_buffer() {
+                for i in 0..320 {
+                    for j in 0..480 {
                         let ind = i * 480 + j;
                         let pixel = screen_buffer.read_pixel(i >> 1, j >> 1).to_u8();
                         html_state_inner.raw_screen_buffer[ind << 2] = pixel.0;
-                        html_state_inner.raw_screen_buffer[(ind << 2)+1] = pixel.1;
-                        html_state_inner.raw_screen_buffer[(ind << 2)+2] = pixel.2;
-                        html_state_inner.raw_screen_buffer[(ind << 2)+3] = 255;
+                        html_state_inner.raw_screen_buffer[(ind << 2) + 1] = pixel.1;
+                        html_state_inner.raw_screen_buffer[(ind << 2) + 2] = pixel.2;
+                        html_state_inner.raw_screen_buffer[(ind << 2) + 3] = 255;
                     }
                 }
-                
             }
             let data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
                 Clamped(&mut html_state_inner.raw_screen_buffer[..]),
                 480,
                 320,
-            ).unwrap();
-            html_state_inner.canvas_context.put_image_data(&data, 0., 0.).unwrap();
-            
+            )
+            .unwrap();
+            html_state_inner
+                .canvas_context
+                .put_image_data(&data, 0., 0.)
+                .unwrap();
+
             // audio
-            if let Some(it) = gba.get_sound_buffer(){
+            if gba.get_sound_buffer().is_some() {
                 gba.reset_sound_buffer();
             }
 
             // saves
             // TODO
-            
+
             // fps
-            if let Some(fps) = gba.get_fps(){
-                html_state_inner.fps_label.set_inner_text(&format!("FPS: {:.3}", fps));
+            if let Some(fps) = gba.get_fps() {
+                html_state_inner
+                    .fps_label
+                    .set_inner_text(&format!("FPS: {:.3}", fps));
             }
 
             // input
@@ -180,7 +188,12 @@ fn schedule_gba(gba_rc: Rc<RefCell<Option<GBA>>>, time_micros: u64, html_state: 
             schedule_gba(gba_rc.clone(), sleep_micros, html_state.clone()).unwrap();
         }
     }) as Box<dyn FnMut(_)>);
-    window.set_timeout_with_callback_and_timeout_and_arguments_0(closure.as_ref().unchecked_ref(), (time_micros / 1000) as i32).unwrap();
+    window
+        .set_timeout_with_callback_and_timeout_and_arguments_0(
+            closure.as_ref().unchecked_ref(),
+            (time_micros / 1000) as i32,
+        )
+        .unwrap();
     closure.forget();
     Ok(())
 }

@@ -13,4 +13,5 @@ pistoncore-glutin_window = "0.69.0"
 piston2d-opengl_graphics = "0.79.0"
 clap = { version = "3.1.18", features = ["derive"] }
 cpal = "0.13.5"
+log = "0.4"
 gba-core = {path = "../../core"}
