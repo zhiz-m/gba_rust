@@ -195,7 +195,7 @@ impl GBA {
                     // roughly every second in real-time, we want to normalize all the values in the array
                     if self.workflow_times[4].0 >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60 {
                         let min = self.workflow_times[4].0;
-                        self.workflow_times.iter_mut().for_each(|x| (*x).0 -= min);
+                        self.workflow_times.iter_mut().for_each(|x| x.0 -= min);
                         self.workflow_times[4].0 = config::CPU_EXECUTION_INTERVAL_CLOCKS;
                     } else {
                         self.workflow_times[4].0 += config::CPU_EXECUTION_INTERVAL_CLOCKS;

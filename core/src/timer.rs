@@ -39,11 +39,11 @@ impl Timer {
             _ => unreachable!("timer invalid period"),
         };
         self.period = 1 << self.period_pow;
-        //println!("timer: {}, period: {}", self.timer_no, self.period);
+        //info!("timer: {}, period: {}", self.timer_no, self.period);
     }
 
     pub fn set_is_enabled(&mut self, enable: bool) {
-        //println!("timer_no: {}, enabled: {}", self.timer_no, enable);
+        //info!("timer_no: {}, enabled: {}", self.timer_no, enable);
         if enable && !self.is_enabled {
             self.timer_count = self.reload_val;
         } else if !enable && self.is_enabled {
@@ -64,7 +64,7 @@ impl Timer {
 
             // overflow
             if self.timer_count < timer_count_old {
-                //println!("timer_no: {}, reload_val: {}, period: {}", self.timer_no, self.reload_val, self.period);
+                //info!("timer_no: {}, reload_val: {}, period: {}", self.timer_no, self.reload_val, self.period);
                 // increment the position of next Direct Sound sample played
                 //let snd_ds_cnt = bus.read_halfword_raw(0x04000082);
                 for i in 0..2 {
@@ -78,7 +78,7 @@ impl Timer {
                             if let Some(val) = bus.apu.direct_sound_fifo[i].pop_front() {
                                 bus.apu.direct_sound_fifo_cur[i] = val;
                             } else {
-                                //println!("timer overflow; attempted read from empty fifo")
+                                //warn!("timer overflow; attempted read from empty fifo")
                             }
                         }
                     }

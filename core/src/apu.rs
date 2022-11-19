@@ -266,21 +266,22 @@ impl Apu {
                     let snd_sweep = bus.read_byte(0x04000060);
                     let sweep_cnt_hit = ((snd_sweep as u32 >> 4) & 0b111) << 17;
                     let sweep_num = snd_sweep & 0b111;
-                    if sweep_cnt_hit != 0 && sweep_num != 0 {
-                        if self.square_sweep_cnt[i] >= sweep_cnt_hit {
-                            let rate_delta = self.square_rate[i] >> sweep_num;
-                            if (snd_sweep >> 3) & 1 > 0 {
-                                self.square_rate[i] -= rate_delta;
-                            }
-                            // would overflow, disable current channel
-                            else if 2048 - self.square_rate[i] <= rate_delta {
-                                self.square_disable[i] = true;
-                                continue;
-                            } else {
-                                self.square_rate[i] += rate_delta;
-                            }
-                            self.square_sweep_cnt[i] = 0;
+                    if sweep_cnt_hit != 0
+                        && sweep_num != 0
+                        && self.square_sweep_cnt[i] >= sweep_cnt_hit
+                    {
+                        let rate_delta = self.square_rate[i] >> sweep_num;
+                        if (snd_sweep >> 3) & 1 > 0 {
+                            self.square_rate[i] -= rate_delta;
                         }
+                        // would overflow, disable current channel
+                        else if 2048 - self.square_rate[i] <= rate_delta {
+                            self.square_disable[i] = true;
+                            continue;
+                        } else {
+                            self.square_rate[i] += rate_delta;
+                        }
+                        self.square_sweep_cnt[i] = 0;
                     }
                 }
                 let snd_cur_cnt = bus.read_halfword(0x04000062 + i * 6);
@@ -355,7 +356,7 @@ impl Apu {
                 }
                 // sound right and left channels
                 for (j, item) in enable_right_left.iter().enumerate() {
-                    if *item {
+                    if !*item {
                         continue;
                     }
                     let final_sample = match (snd_ds_cnt >> (2 + j)) & 1 {

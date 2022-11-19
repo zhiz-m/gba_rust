@@ -292,33 +292,23 @@ impl Cpu {
         //self.debug(&format!("halting: {}\n", self.halt));
         //self.debug(&format!("IE: {:#018b}\n", bus.read_halfword(0x04000200)));
 
-        let clocks = 
-        //repeat(
-        if !self.read_flag(Flag::I) && self.interrupt_requested{
-                self.halt = false;
-                //self.bus_set_reg_if(bus);
-                //info!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
-                //self.debug = true;
-                self.execute_hardware_interrupt()
+        let clocks = if !self.read_flag(Flag::I) && self.interrupt_requested {
+            self.halt = false;
+            //self.bus_set_reg_if(bus);
+            //info!("interrupt: {:#018b}", bus.read_halfword(0x04000200));
+            //self.debug = true;
+            self.execute_hardware_interrupt()
+        } else if self.check_dma(bus) {
+            self.execute_dma(bus)
+        } else if self.halt {
+            config::CPU_HALT_SLEEP_CYCLES // consume clock cycles; do nothing
+        } else {
+            match self.read_flag(Flag::T) {
+                false => self.decode_execute_instruction_arm(bus),
+                true => self.decode_execute_instruction_thumb(bus),
             }
-            else if self.check_dma(bus){
-                self.execute_dma(bus)
-            }
-            else if self.halt {
-                config::CPU_HALT_SLEEP_CYCLES // consume clock cycles; do nothing
-            }
-            else{
-                match self.read_flag(Flag::T) {
-                    false => self.decode_execute_instruction_arm(bus),
-                    true => self.decode_execute_instruction_thumb(bus)
-                }
-            }
-        //).take(config::CPU_ITERATIONS_PER_SIMULATION).sum()
-        ;
-        //self.interrupt = 0;
+        };
 
-        //#[cfg(feature="debug_instr")]
-        //
         assert!(clocks > 0);
         clocks
     }
@@ -348,85 +338,87 @@ impl Cpu {
         self.print_pc(bus);
 
         if self.check_cond(self.instr >> 28) {
-            cur_cycles +=
-            // branch and exchange shares 0b000 with execute_dataproc. 
-            if (self.instr << 4) >> 8 == 0b000100101111111111110001{
+            cur_cycles += if (self.instr << 4) >> 8 == 0b000100101111111111110001 {
+                // branch and exchange shares 0b000 with execute_dataproc.
                 #[cfg(feature = "debug_instr")]
                 self.debug("        BX");
                 self.execute_branch_exchange()
-            }
-            // software interrupt
-            else if (self.instr >> 24) & 0b1111 == 0b1111 {
+            } else if (self.instr >> 24) & 0b1111 == 0b1111 {
+                // software interrupt
                 #[cfg(feature = "debug_instr")]
                 self.debug("        SWI");
                 self.execute_software_interrupt()
-            }
-            // multiply and multiply_long share 0b000 with execute_dataproc. 
-            else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001{
+            } else if (self.instr >> 22) & 0b111111 == 0 && (self.instr >> 4) & 0b1111 == 0b1001 {
+                // multiply and multiply_long share 0b000 with execute_dataproc.
                 #[cfg(feature = "debug_instr")]
                 self.debug("        MUL, MLA");
                 self.execute_multiply()
-            }
-            else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001{
+            } else if (self.instr >> 23) & 0b11111 == 1 && (self.instr >> 4) & 0b1111 == 0b1001 {
                 #[cfg(feature = "debug_instr")]
                 self.debug("        multiply long");
                 self.execute_multiply_long()
-            }
-            // load and store instructions
-            // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
-            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0 && (self.instr >> 4) & 0b11111111 == 0b1001 {
+            } else if (self.instr >> 23) & 0b11111 == 0b00010
+                && (self.instr >> 20) & 0b11 == 0
+                && (self.instr >> 4) & 0b11111111 == 0b1001
+            {
+                // load and store instructions
+                // swp: note that this must be checked before execute_ldr_str and execute_halfword_signed_transfer
                 #[cfg(feature = "debug_instr")]
                 self.debug("        SWP");
                 self.execute_swp(bus)
-            }
-            else if (self.instr >> 26) & 0b11 == 1 {
+            } else if (self.instr >> 26) & 0b11 == 1 {
                 #[cfg(feature = "debug_instr")]
                 self.debug("        LDR, STR");
                 self.execute_ldr_str(bus)
-            }
-            else if (self.instr >> 25) & 0b111 == 0 && 
-                (((self.instr >> 22) & 1 == 0 && (self.instr >> 7) & 0b11111 == 1 && (self.instr >> 4) & 1 == 1) ||
-                ((self.instr >> 22) & 1 == 1 && (self.instr >> 7) & 1 == 1 && (self.instr >> 4) & 1 == 1)) {
-                    #[cfg(feature = "debug_instr")]
-                    self.debug("        halfword_signed_transfer");
+            } else if (self.instr >> 25) & 0b111 == 0
+                && (((self.instr >> 22) & 1 == 0
+                    && (self.instr >> 7) & 0b11111 == 1
+                    && (self.instr >> 4) & 1 == 1)
+                    || ((self.instr >> 22) & 1 == 1
+                        && (self.instr >> 7) & 1 == 1
+                        && (self.instr >> 4) & 1 == 1))
+            {
+                #[cfg(feature = "debug_instr")]
+                self.debug("        halfword_signed_transfer");
                 self.execute_halfword_signed_transfer(bus)
-            }
-            // msr and mrs
-            else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 16) & 0b111111 == 0b001111 && self.instr & 0b111111111111 == 0{
+            } else if (self.instr >> 23) & 0b11111 == 0b00010
+                && (self.instr >> 16) & 0b111111 == 0b001111
+                && self.instr & 0b111111111111 == 0
+            {
+                // msr and mrs
                 #[cfg(feature = "debug_instr")]
                 self.debug("        MRS");
                 self.execute_mrs_psr2reg()
-            } 
-            /*else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
-                self.debug("        MSR reg2psr");
-                self.execute_msr_reg2psr()
-            } */
-            //else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
-            else if ((self.instr >> 23) & 0b11111 == 0b00110 && (self.instr >> 20) & 0b11 == 0b10) 
-                || ((self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 20) & 0b11 == 0b10 && (self.instr >> 4) & 0b111111111111 == 0b111100000000) {
-                    #[cfg(feature = "debug_instr")]
-                    self.debug("        MSR");
+            } else if ((self.instr >> 23) & 0b11111 == 0b00110 && (self.instr >> 20) & 0b11 == 0b10)
+                || ((self.instr >> 23) & 0b11111 == 0b00010
+                    && (self.instr >> 20) & 0b11 == 0b10
+                    && (self.instr >> 4) & 0b111111111111 == 0b111100000000)
+            {
+                #[cfg(feature = "debug_instr")]
+                self.debug("        MSR");
                 self.execute_msr()
-            } 
-            else{
+            } else {
                 match (self.instr >> 25) & 0b111 {
                     0b000 | 0b001 => {
                         #[cfg(feature = "debug_instr")]
                         self.debug("        dataproc");
                         self.execute_dataproc()
-                    },
+                    }
                     0b101 => {
                         #[cfg(feature = "debug_instr")]
                         self.debug("        branch");
                         self.execute_branch()
-                    },
+                    }
                     0b100 => {
                         #[cfg(feature = "debug_instr")]
                         self.debug("        block data transfer");
                         self.execute_block_data_transfer(bus)
-                    },
+                    }
                     _ => {
-                        print!("Error undefined instruction {:#034b} at pc {}", self.instr, self.actual_pc);
+                        print!(
+                            "Error undefined instruction {:#034b} at pc {}",
+                            self.instr, self.actual_pc
+                        );
                         0
                     }
                 }
@@ -436,6 +428,12 @@ impl Cpu {
             #[cfg(feature = "debug_instr")]
             self.debug("cond check failed, no instruction execution");
         }
+
+        /*else if (self.instr >> 23) & 0b11111 == 0b00010 && (self.instr >> 12) & 0b1111111111 == 0b1010011111 && (self.instr >> 4) & 0b1111111111 == 0{
+            self.debug("        MSR reg2psr");
+            self.execute_msr_reg2psr()
+        } */
+        //else if (self.instr >> 26) & 0b11 == 0 && (self.instr >> 23) & 0b11 == 0b10 && (self.instr >> 12) & 0b1111111111 == 0b1010001111{
 
         if self.increment_pc {
             self.actual_pc += 0b100;

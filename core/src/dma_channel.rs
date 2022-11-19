@@ -174,14 +174,14 @@ impl DMA_Channel {
             0b01 => !0, // -1
             0b10 => 0,
             0b11 => {
-                println!("illegal DMA channel src_increment of 0b11");
+                warn!("illegal DMA channel src_increment of 0b11");
                 0
             }
             _ => unreachable!(),
         };
 
         if self.timing_mode != TimingMode::Fifo {
-            //println!("non-fifo dma dest_addr: {:#x}", self.dest_addr);
+            //info!("non-fifo dma dest_addr: {:#x}", self.dest_addr);
             self.chunk_size = match (dma_cnt >> 0x1a) & 1 > 0 {
                 true => ChunkSize::Word,
                 false => ChunkSize::Halfword,
@@ -199,11 +199,11 @@ impl DMA_Channel {
             || (self.timing_mode != TimingMode::Immediate && (dma_cnt >> 0x19) & 1 > 0);
 
         if self.channel_no != 1 && self.channel_no != 2 {
-            //println!("dest: {:#x}, channel_no: {}", self.dest_addr, self.channel_no);
+            //info!("dest: {:#x}, channel_no: {}", self.dest_addr, self.channel_no);
         }
         //if self.timing_mode != TimingMode::FIFO{
         for _ in 0..self.num_transfers {
-            //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
+            //info!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
             match self.chunk_size {
                 ChunkSize::Halfword => {
                     let data = bus.read_halfword(self.src_addr);
@@ -214,7 +214,7 @@ impl DMA_Channel {
                     bus.store_word(self.dest_addr, data);
                 }
                 _ => {
-                    println!("DMA chunk size must be Word or Halfword");
+                    warn!("DMA chunk size must be Word or Halfword");
                 }
             };
             self.src_addr += self.src_increment * self.chunk_size as usize;
@@ -225,10 +225,10 @@ impl DMA_Channel {
             let channel_num = (self.dest_addr- 0x040000a0) >> 2;
             for _ in 0..self.num_transfers{
                 /*if self.dest_addr == 0x040000a0{
-                    println!("src addr:     {:#x}", self.src_addr);
+                    info!("src addr:     {:#x}", self.src_addr);
                 }
                 else{
-                    println!("    src addr: {:#x}", self.src_addr);
+                    info!("    src addr: {:#x}", self.src_addr);
                 }*/
                 let word = bus.read_word(self.src_addr);
                 bus.apu.direct_sound_fifo[channel_num].push_back((word & 0b11111111) as i8);

@@ -1,5 +1,7 @@
 #![allow(non_camel_case_types)]
 
+use log::warn;
+
 use crate::bus::{Bus, MemoryRegion};
 
 use std::{cmp, num::Wrapping};
@@ -9,7 +11,7 @@ pub struct Pixel(u8, u8, u8);
 
 impl Pixel {
     pub fn new(r: u8, g: u8, b: u8) -> Pixel {
-        return Pixel(cmp::min(r, 31), cmp::min(g, 31), cmp::min(b, 31));
+        Pixel(cmp::min(r, 31), cmp::min(g, 31), cmp::min(b, 31))
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
@@ -21,11 +23,7 @@ impl Pixel {
     }
 
     pub fn to_u8(&self) -> (u8, u8, u8) {
-        (
-            self.0 << 3,
-            self.1 << 3,
-            self.2 << 3,
-        )
+        (self.0 << 3, self.1 << 3, self.2 << 3)
     }
 
     pub fn blend(pixel_front: Pixel, pixel_back: Pixel, a: u16, b: u16) -> Pixel {
@@ -42,17 +40,23 @@ pub struct ScreenBuffer {
     buffer: Box<[[Pixel; 240]; 160]>,
 }
 
+impl Default for ScreenBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
-        return ScreenBuffer {
+        ScreenBuffer {
             buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
-        };
+        }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
         self.buffer[row][col] = pixel;
     }
     pub fn read_pixel(&self, row: usize, col: usize) -> Pixel {
-        return self.buffer[row][col];
+        self.buffer[row][col]
     }
 }
 
@@ -78,7 +82,6 @@ enum PixelType {
 
 pub struct Ppu {
     //clock_cur: u32,
-
     buffer: ScreenBuffer,
     pub buffer_ready: bool,
 
@@ -109,7 +112,6 @@ impl Ppu {
     pub fn new() -> Ppu {
         Ppu {
             //clock_cur: 960, // clocks needed to process first scanline
-
             buffer: ScreenBuffer::new(),
             buffer_ready: false,
 
@@ -175,7 +177,7 @@ impl Ppu {
                         .write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
                 }
             }
-            //println!("  scanline processed: {}", self.cur_line);
+            //info!("  scanline processed: {}", self.cur_line);
 
             self.is_hblank = true;
 
@@ -224,7 +226,7 @@ impl Ppu {
         if !self.is_hblank && self.cur_line as u16 == (self.disp_stat >> 8) {
             if (self.disp_stat >> 5) & 1 > 0 {
                 self.cpu_interrupt |= 0b100;
-                //println!("vcount irq requested: {}, frame: {}", self.disp_stat >> 8, self.frame_count);
+                //info!("vcount irq requested: {}, frame: {}", self.disp_stat >> 8, self.frame_count);
             }
             self.disp_stat |= 0b100;
         }
@@ -258,8 +260,8 @@ impl Ppu {
 
         self.init_window_scanline(bus);
 
-        //println!("bldcnt: {:#018b}, bldalpha: {:#018b}", bus.read_halfword_raw(0x04000050), bus.read_halfword_raw(0x04000052));
-        //println!("bg0cnt: {:#018b}, bg2cnt: {:#018b}", bus.read_halfword_raw(0x04000008), bus.read_halfword_raw(0x04000012));
+        //info!("bldcnt: {:#018b}, bldalpha: {:#018b}", bus.read_halfword_raw(0x04000050), bus.read_halfword_raw(0x04000052));
+        //info!("bg0cnt: {:#018b}, bg2cnt: {:#018b}", bus.read_halfword_raw(0x04000008), bus.read_halfword_raw(0x04000012));
 
         for win in [
             WindowType::W_full,
@@ -295,7 +297,7 @@ impl Ppu {
                     }
                     3 => self.process_bg_mode_3(bus),
                     4 => self.process_bg_mode_4(bus),
-                    5 => println!("current bg mode 5, not implemented yet"),
+                    5 => warn!("current bg mode 5, not implemented yet"),
                     _ => {}
                 }
 
@@ -314,7 +316,7 @@ impl Ppu {
         let bm = (bld_cnt >> 6) & 0b11;
         let eva = bld_alpha & 0b11111;
         let evb = (bld_alpha >> 8) & 0b11111;
-        //println!("eva: {:#07b}, evb: {:#07b}, bw_fade: {:#07b}", eva, evb, bw_fade);
+        //info!("eva: {:#07b}, evb: {:#07b}, bw_fade: {:#07b}", eva, evb, bw_fade);
 
         for i in 0..240 {
             let (pixel1, mut pixel_type1, win) = self.cur_scanline_front[i];
@@ -537,7 +539,7 @@ impl Ppu {
             };
 
             //if self.cur_line == 10 && bg_num == 0 {
-            //    println!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword_raw(0x05000000 + pal as usize * 2));
+            //    info!("pal addr: {:#x}, screen_entry: {:#018b}, pixel colour: {:#018b}", pal, screen_entry, bus.read_halfword_raw(0x05000000 + pal as usize * 2));
             //}
 
             let pixel = Ppu::process_palette_colour(pal, !density, false, bus);
@@ -557,7 +559,7 @@ impl Ppu {
             (0b10, true) => (512, 512),
             (0b11, true) => (1024, 1024),
             _ => {
-                println!(
+                warn!(
                     "invalid sz_flag for tiled bg dimensions: {}, {}",
                     sz_flag, is_affine
                 );
@@ -657,27 +659,23 @@ impl Ppu {
                     let offset_pixels = (oy as usize >> 3) * (w as usize >> 3) * 64
                         + (ox as usize >> 3) * 64
                         + ((oy as usize & 0b111) * 8 + (ox as usize & 0b111));
-
-                    let pal = 
-                    // 4 bits per pixel
-                    if !density { 
+                    let pal = if !density {
+                        // 4 bits per pixel
                         let mut cur_addr = base_tile_index as usize * 32 + (offset_pixels >> 1);
-                        if !map_mode{
-                            cur_addr += (oy as usize >> 3) * (128 - (w as usize >> 1)) << 3;
+                        if !map_mode {
+                            cur_addr += ((oy as usize >> 3) * (128 - (w as usize >> 1))) << 3;
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
-                        if offset_pixels & 1 > 0{
+                        if offset_pixels & 1 > 0 {
                             (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) >> 4) + pal_bank
-                        }
-                        else{
+                        } else {
                             (bus.read_byte_raw(cur_addr, MemoryRegion::Vram) & 0b1111) + pal_bank
                         }
-                    }
-                    // 8 bits per pixel
-                    else{
+                    } else {
+                        // 8 bits per pixel
                         let mut cur_addr = base_tile_index as usize * 32 + offset_pixels;
-                        if !map_mode{
-                            cur_addr += (oy as usize >> 3) * (128 - w as usize) << 3;
+                        if !map_mode {
+                            cur_addr += ((oy as usize >> 3) * (128 - w as usize)) << 3;
                         }
                         let cur_addr = 0x10000 + (cur_addr % 32768);
                         bus.read_byte_raw(cur_addr, MemoryRegion::Vram)
@@ -695,7 +693,7 @@ impl Ppu {
                         }
                         if !process_win_obj {
                             self.update_cur_scanline_sprite(tx, pixel, gfx == 1);
-                        } else if let Some(_) = pixel {
+                        } else if pixel.is_some() {
                             self.set_window_scanline(WindowType::W_obj, tx);
                         }
                     }
@@ -720,7 +718,7 @@ impl Ppu {
             (0b10, 0b10) => (16, 32),
             (0b10, 0b11) => (32, 64),
             _ => {
-                println!("invalid sprite shape and/or size");
+                warn!("invalid sprite shape and/or size");
                 (8, 8)
             }
         }
@@ -741,7 +739,7 @@ impl Ppu {
         self.window_scanlines[3].iter_mut().for_each(|x| *x = true);
         self.window_flags[WindowType::W_out as usize] = bus.read_byte_raw(0x4a, MemoryRegion::IO);
         self.active_windows[3] = true;
-        //println!("W_out: {:#010b}", self.window_flags[WindowType::W_out as usize]);
+        //info!("W_out: {:#010b}", self.window_flags[WindowType::W_out as usize]);
 
         if self.disp_cnt >> (13 + WindowType::W_0 as u16) & 1 > 0 {
             self.window_scanlines[0].iter_mut().for_each(|x| *x = false);
@@ -765,7 +763,7 @@ impl Ppu {
                 }
             }
             self.window_flags[WindowType::W_0 as usize] = bus.read_byte_raw(0x48, MemoryRegion::IO);
-            //println!("W_0: {:#010b}", self.window_flags[WindowType::W_0 as usize]);
+            //info!("W_0: {:#010b}", self.window_flags[WindowType::W_0 as usize]);
         }
         if self.disp_cnt >> (13 + WindowType::W_1 as u16) & 1 > 0 {
             self.window_scanlines[1].iter_mut().for_each(|x| *x = false);
@@ -789,7 +787,7 @@ impl Ppu {
                 }
             }
             self.window_flags[WindowType::W_1 as usize] = bus.read_byte_raw(0x49, MemoryRegion::IO);
-            //println!("W_1: {:#010b}", self.window_flags[WindowType::W_1 as usize]);
+            //info!("W_1: {:#010b}", self.window_flags[WindowType::W_1 as usize]);
         }
 
         if self.disp_cnt >> (13 + WindowType::W_obj as u16) & 1 > 0 {
@@ -797,7 +795,7 @@ impl Ppu {
             self.process_sprites(true, bus);
             self.window_flags[WindowType::W_obj as usize] =
                 bus.read_byte_raw(0x4b, MemoryRegion::IO);
-            //println!("W_obj: {:#010b}", self.window_flags[WindowType::W_obj as usize]);
+            //info!("W_obj: {:#010b}", self.window_flags[WindowType::W_obj as usize]);
         }
     }
 
@@ -808,9 +806,9 @@ impl Ppu {
     }
 
     fn check_window_sprite(&self, process_win_obj: bool) -> bool {
-        return process_win_obj
+        process_win_obj
             || self.cur_window == WindowType::W_full
-            || (self.window_flags[self.cur_window as usize] >> 4) & 1 > 0;
+            || (self.window_flags[self.cur_window as usize] >> 4) & 1 > 0
     }
 
     //fn should_update_pixel(&mut self, index: usize) -> bool {
@@ -954,7 +952,7 @@ impl Ppu {
             //let tile_data = bus.bulk_read_byte(addr, tile_size as usize * w as usize * h as usize / 64);
 
             //if self.cur_line == 1 {
-            //    println!("base tile index: {:#x}", base_tile_index);
+            //    info!("base tile index: {:#x}", base_tile_index);
             //}
 
             // NOTE: these pixels are replaced directly (not using Pixel::overwrite())
@@ -985,8 +983,8 @@ impl Ppu {
                     let pixel = self.process_palette_colour(pal, !density, true, bus);
 
                     //if self.cur_line == 0 && i == 5 && j == 3{
-                    //    //println!("r {}, g: {}, b: {}", pixel.to_float().0, pixel.to_float().1, pixel.to_float().2);
-                    //    println!("addr: {:#x}, addr_row: {:#x}", addr, addr + row_size * i);
+                    //    //info!("r {}, g: {}, b: {}", pixel.to_float().0, pixel.to_float().1, pixel.to_float().2);
+                    //    info!("addr: {:#x}, addr_row: {:#x}", addr, addr + row_size * i);
                     //}
 
                     let (i_final, j_final) =
@@ -1071,7 +1069,7 @@ impl Ppu {
                         let oy = ((pc*cx + pd*cy) as i16 >> 8) as u16  + (h as u16 >> 1);
 
                         //if i==0 && j==0 {
-                        //    println!("cx: {}, cy: {}, ox: {}, oy: {}", cx, cy, ox, oy);
+                        //    info!("cx: {}, cy: {}, ox: {}, oy: {}", cx, cy, ox, oy);
                         //}
 
                         if ox < w as u16 && oy < h as u16 {

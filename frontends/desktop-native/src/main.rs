@@ -1,9 +1,10 @@
 mod config;
 mod frontend;
+mod logger;
 
 use clap::Parser;
 use frontend::Frontend;
-use gba_core;
+use log::{info, warn};
 
 use std::{
     env,
@@ -13,6 +14,8 @@ use std::{
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
+use crate::logger::init_logger;
 
 #[derive(Parser)]
 #[clap(about = "GBA emulator written in Rust")]
@@ -32,9 +35,15 @@ struct Arguments {
     /// Save bank to load from (integer; [0,4])
     #[clap(short = 'b', long)]
     save_state_bank: Option<usize>,
+
+    /// Name of the preferred audio device
+    #[clap(short = 'a', long)]
+    audio_device: Option<String>,
 }
 
 fn main() {
+    init_logger().expect("failed to init logger");
+
     let cli = Arguments::parse();
     //let rom_path = env::args().nth(1).expect("first argument must be the path to a .gba ROM fle");
     //let rom_save_path = env::args().nth(2);
@@ -72,7 +81,7 @@ fn main() {
                 .to_str()
                 .unwrap()
                 .to_string();
-            println!(
+            info!(
                 "save_state_dir: {}, rom_path_filename: {}",
                 save_state_dir, rom_path_filename
             );
@@ -89,13 +98,20 @@ fn main() {
             save_state_dir + "/" + &rom_save_path
         }
     };
-    println!("rom save path: {}", rom_save_path);
+    info!("rom save path: {}", rom_save_path);
     // read save path into save_state
     let save_state = fs::read(&rom_save_path)
         .map(|bin| gba_core::marshall_save_state(&bin))
         .ok();
 
-    let mut frontend = Frontend::new("gba_rust frontend".to_string(), rx1, tx2, rx3, rx4);
+    let mut frontend = Frontend::new(
+        "gba_rust frontend".to_string(),
+        cli.audio_device.as_deref(),
+        rx1,
+        tx2,
+        rx3,
+        rx4,
+    );
     let mut gba = gba_core::GBA::new(
         &bios_bin,
         &rom_bin,
@@ -126,7 +142,7 @@ fn main() {
             // video
             if let Some(screen_buffer) = gba.get_screen_buffer() {
                 if let Err(why) = tx1.send(screen_buffer.clone()) {
-                    println!("   screenbuf sending error: {}", why);
+                    warn!("   screenbuf sending error: {}", why);
                 }
             }
 
@@ -139,7 +155,7 @@ fn main() {
             // saves
             if let Some(save_state) = gba.get_updated_save_state() {
                 fs::write(&rom_save_path, save_state[..].concat()).unwrap();
-                println!("save written to {}", &rom_save_path);
+                info!("save written to {}", &rom_save_path);
             }
 
             // fps
@@ -154,7 +170,7 @@ fn main() {
                 gba.process_key(key, is_pressed);
             }
 
-            //println!("process frame");
+            //info!("process frame");
         }
     });
 

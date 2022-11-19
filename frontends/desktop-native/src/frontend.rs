@@ -5,6 +5,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::Device;
 use glutin_window::GlutinWindow as Window;
 use graphics::{clear, rectangle, Transformed};
+use log::{info, warn};
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston::event_loop::{EventSettings, Events};
 use piston::input::RenderEvent;
@@ -36,6 +37,7 @@ pub struct Frontend {
 impl Frontend {
     pub fn new(
         title: String,
+        audio_device_name: Option<&str>,
         screenbuf_receiver: Receiver<ScreenBuffer>,
         key_sender: Sender<(KeyInput, bool)>,
         audio_receiver: Receiver<(f32, f32)>,
@@ -46,15 +48,25 @@ impl Frontend {
             .unwrap()
             .map(|x| {
                 if x.default_output_config().ok()?.channels() == 2 {
+                    if let Some(preferred_name) = audio_device_name {
+                        let preferred_name = preferred_name.to_lowercase();
+                        if let Ok(device_name) = x.name() {
+                            if device_name.to_lowercase().contains(&preferred_name) {
+                                return Some(x);
+                            } else {
+                                return None;
+                            }
+                        }
+                    }
                     Some(x)
                 } else {
                     None
                 }
             })
             .find(|x| x.is_some())
-            .expect("no suitable stereo output device")
+            .expect("no suitable audio device was found")
             .unwrap();
-        println!("audio device: {}", &audio_output_device.name().unwrap());
+        info!("audio device: {}", &audio_output_device.name().unwrap());
         Frontend {
             gl: None,
             window: None,
@@ -121,11 +133,11 @@ impl Frontend {
                 &config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     let channel_num = config.channels as usize;
-                    //println!("data len: {}, channel num: {}", data.len(), channel_num);
+                    //info!("data len: {}, channel num: {}", data.len(), channel_num);
                     //let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
                     //let since = now.checked_sub(t).unwrap().as_nanos();
                     //t = now;
-                    //println!("nanos since: {}", since);
+                    //info!("nanos since: {}", since);
                     for frame in data.chunks_mut(channel_num) {
                         match receiver.recv() {
                             Ok(stereo_data) => {
@@ -135,12 +147,12 @@ impl Frontend {
                                 }
                             }
                             Err(why) => {
-                                println!("audio stream err: {}", why.to_string())
+                                warn!("audio stream err: {}", why.to_string())
                             }
                         }
                     }
                 },
-                move |err| println!("err: {}", err),
+                move |err| warn!("err: {}", err),
             )
             .unwrap();
 
@@ -148,7 +160,7 @@ impl Frontend {
 
         while self.render().unwrap() {}
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn render(&mut self) -> Result<bool, &'static str> {
@@ -192,14 +204,14 @@ impl Frontend {
             if let Some(Button::Keyboard(key)) = e.press_args() {
                 if let Some(key_input) = self.key_map.get(&key) {
                     if let Err(why) = self.key_sender.send((*key_input, true)) {
-                        println!("   keybuf sending error: {}", why);
+                        warn!("   keybuf sending error: {}", why);
                     }
                 }
             }
             if let Some(Button::Keyboard(key)) = e.release_args() {
                 if let Some(key_input) = self.key_map.get(&key) {
                     if let Err(why) = self.key_sender.send((*key_input, false)) {
-                        println!("   keybuf sending error: {}", why);
+                        warn!("   keybuf sending error: {}", why);
                     }
                 }
             }
