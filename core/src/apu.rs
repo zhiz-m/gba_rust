@@ -212,6 +212,7 @@ impl Apu {
         }
     }
 
+    #[inline(always)]
     pub fn get_audio_buffer(&mut self) -> Option<SoundBufferIt> {
         if self.extern_audio_enabled {
             Some(SoundBufferIt {
@@ -224,11 +225,13 @@ impl Apu {
         }
     }
 
+    #[inline(always)]
     pub fn clear_buffer(&mut self) {
         self.sound_out_buff_index = 0;
     }
 
     // called every config::AUDIO_SAMPLE_CLOCKS clocks
+    #[inline(always)]
     pub fn clock(&mut self, bus: &mut Bus) {
         self.square_disable[0] = false;
         self.square_disable[1] = false;
@@ -418,6 +421,7 @@ impl Apu {
         }
     }
 
+    #[inline(always)]
     fn process_wave_channel(&mut self, cur_tuple: &mut StereoTuple, bus: &mut Bus) {
         let snd_cur_cnt_l = bus.read_byte_raw(0x70, MemoryRegion::IO);
         if snd_cur_cnt_l >> 7 == 0 {
@@ -508,6 +512,7 @@ impl Apu {
 
     // reset envelope, rate and length
     // channel num must be 0 or 1
+    #[inline(always)]
     pub fn reset_square_channel(&mut self, channel_num: usize, bus: &Bus) {
         let snd_cur_cnt = bus.read_halfword_raw(0x62 + channel_num * 6, MemoryRegion::IO);
         let snd_cur_freq = bus.read_halfword_raw(0x64 + channel_num * 8, MemoryRegion::IO);
@@ -518,6 +523,7 @@ impl Apu {
         self.square_envelope_cnt[channel_num] = 0;
     }
 
+    #[inline(always)]
     pub fn reset_wave_channel(&mut self, bus: &Bus) {
         self.wave_length = (256 - bus.read_byte_raw(0x72, MemoryRegion::IO) as u32) << 16;
         self.wave_rate = bus.read_halfword_raw(0x74, MemoryRegion::IO) as u32 & 0b11111111111;

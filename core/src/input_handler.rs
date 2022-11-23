@@ -61,6 +61,7 @@ impl InputHandler {
         }
     }
 
+    #[inline(always)]
     pub fn process_key(&mut self, key: KeyInput, is_pressed: bool) {
         match key {
             KeyInput::Speedup => {
@@ -84,10 +85,12 @@ impl InputHandler {
     }
 
     // must be called before processing keys for each frame
+    #[inline(always)]
     pub fn frame_preprocess(&mut self) {
         self.prev_speedup_state = self.cur_speedup_state;
     }
 
+    #[inline(always)]
     pub fn commit(&self, bus: &mut Bus) {
         bus.store_halfword(0x04000130, self.keybuf.0);
     }

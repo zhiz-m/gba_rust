@@ -19,7 +19,7 @@ opt-level = 3
 
 [profile.release-lto]
 inherits = "release"
-lto = true
+lto = "fat"
 codegen-units = 1
 
 [profile.release-lto.package."*"]

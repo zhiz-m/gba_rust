@@ -91,6 +91,7 @@ impl DMA_Channel {
         }
     }
 
+    #[inline(always)]
     pub fn check_is_active(&self, bus: &Bus) -> bool {
         match self.is_enabled {
             false => false,
@@ -132,6 +133,7 @@ impl DMA_Channel {
     }
 
     // returns number of cycles
+    #[inline(always)]
     pub fn execute_dma(&mut self, bus: &mut Bus) -> u32 {
         //self.src_addr = bus.read_word(0x040000b0 + 12 * self.channel_no) as usize;
         //self.dest_addr = bus.read_word(0x040000b4 + 12 * self.channel_no) as usize;

@@ -1,3 +1,5 @@
+//use log::info;
+
 use crate::{
     apu::{Apu, SoundBufferIt},
     bus::Bus,
@@ -67,13 +69,6 @@ impl GBA {
             save_state,
             save_state_updated: false,
 
-            /*heap: BinaryHeap::from([
-                Reverse((0, Workflow::Timer)),
-                Reverse((0, Workflow::Cpu)),
-                Reverse((0, Workflow::Apu)),
-                Reverse((0, Workflow::Ppu)),
-                Reverse((0, Workflow::Normaliser)),
-            ]),*/
             workflow_times: [
                 (0, Workflow::Timer),
                 (0, Workflow::Cpu),
@@ -162,6 +157,9 @@ impl GBA {
                     self.workflow_times[3].0 += self.ppu.clock(&mut self.bus);
                     if self.ppu.buffer_ready {
                         self.on_new_buffer(current_time);
+
+                        //info!("arm count: {}, thumb count: {}", self.bus.cpu.arm_cnt, self.bus.cpu.thumb_cnt);
+
                         return Ok(if self.last_finished_time > current_time {
                             self.last_finished_time - current_time
                         } else {

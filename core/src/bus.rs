@@ -163,11 +163,13 @@ impl Bus {
 
     // -------- public memory read/write interfaces, intended for user instructions.
 
+    #[inline(always)]
     pub fn read_byte(&mut self, addr: usize) -> u8 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, true);
         self.internal_read_byte(addr, region)
     }
 
+    #[inline(always)]
     pub fn read_halfword(&mut self, addr: usize) -> u16 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
         assert!(addr & 1 == 0);
@@ -175,6 +177,7 @@ impl Bus {
             + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
     }
 
+    #[inline(always)]
     pub fn read_word(&mut self, addr: usize) -> u32 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
         assert!(addr & 0b11 == 0);
@@ -184,11 +187,13 @@ impl Bus {
             + ((self.internal_read_byte(addr + 3, region) as u32) << 24)
     }
 
+    #[inline(always)]
     pub fn store_byte(&mut self, addr: usize, val: u8) {
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, false);
         self.internal_write_byte(addr, region, val);
     }
 
+    #[inline(always)]
     pub fn store_halfword(&mut self, addr: usize, val: u16) {
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, false);
         assert!(addr & 1 == 0);
@@ -196,6 +201,7 @@ impl Bus {
         self.internal_write_byte(addr + 1, region, ((val >> 8) & 0b11111111) as u8);
     }
 
+    #[inline(always)]
     pub fn store_word(&mut self, addr: usize, val: u32) {
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, false);
         assert!(addr & 0b11 == 0);
@@ -208,15 +214,18 @@ impl Bus {
     // -------- fast read/write interfaces, intended for use by system (not user instructions)
     //          note: these functions do not perform any wrapping at all.
 
+    #[inline(always)]
     pub fn read_byte_raw(&self, addr: usize, region: MemoryRegion) -> u8 {
         self.mapped_mem[region as usize][addr]
     }
 
+    #[inline(always)]
     pub fn read_halfword_raw(&self, addr: usize, region: MemoryRegion) -> u16 {
         self.mapped_mem[region as usize][addr] as u16
             + ((self.mapped_mem[region as usize][addr + 1] as u16) << 8)
     }
 
+    #[inline(always)]
     pub fn read_word_raw(&self, addr: usize, region: MemoryRegion) -> u32 {
         self.mapped_mem[region as usize][addr] as u32
             + ((self.mapped_mem[region as usize][addr + 1] as u32) << 8)
@@ -224,10 +233,12 @@ impl Bus {
             + ((self.mapped_mem[region as usize][addr + 3] as u32) << 24)
     }
 
+    #[inline(always)]
     pub fn store_byte_raw(&mut self, addr: usize, region: MemoryRegion, val: u8) {
         self.mapped_mem[region as usize][addr] = val;
     }
 
+    #[inline(always)]
     pub fn store_halfword_raw(&mut self, addr: usize, region: MemoryRegion, val: u16) {
         self.mapped_mem[region as usize][addr] = (val & 0b11111111) as u8;
         self.mapped_mem[region as usize][addr + 1] = ((val >> 8) & 0b11111111) as u8;
@@ -241,12 +252,14 @@ impl Bus {
     }*/
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
+    #[inline(always)]
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
         let reg_if = self.read_halfword_raw(0x202, MemoryRegion::IO);
         let cur_reg_if = interrupt & self.read_halfword_raw(0x200, MemoryRegion::IO);
         self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
     }
 
+    #[inline(always)]
     pub fn timer_clock(&mut self) {
         if !self.is_any_timer_active {
             return;
@@ -266,12 +279,14 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn cpu_clock(&mut self) -> u32 {
         let ptr = &mut self.cpu as *mut Cpu;
         unsafe { (*ptr).clock(self) }
     }
 
     // note: for clarify, channels 1-4 will be representing using numbers 0-3
+    #[inline(always)]
     pub fn apu_clock(&mut self) {
         let ptr = &mut self.apu as *mut Apu;
         unsafe {
@@ -279,11 +294,13 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn export_sram(&self, buff: &mut [u8]) {
         buff.copy_from_slice(&self.mapped_mem[MemoryRegion::CartridgeSram as usize][..]);
     }
 
     // -------- helper functions
+    #[inline(always)]
     pub fn set_is_any_dma_active(&mut self) {
         self.is_any_dma_active = false;
         for i in 0..4 {
@@ -294,6 +311,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn set_is_any_timer_active(&mut self) {
         self.is_any_timer_active = false;
         for i in 0..4 {
@@ -304,6 +322,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     fn internal_read_byte(&mut self, addr: usize, region: MemoryRegion) -> u8 {
         match region {
             MemoryRegion::IO => {
@@ -359,6 +378,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     fn internal_write_byte(&mut self, addr: usize, region: MemoryRegion, val: u8) {
         match region {
             MemoryRegion::IO => {
@@ -735,6 +755,7 @@ impl Bus {
         self.cartridge_type_state[2] = 0;
     }
 
+    #[inline(always)]
     fn addr_match(
         &self,
         addr: usize,

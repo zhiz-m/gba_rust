@@ -29,7 +29,8 @@ impl Timer {
         }
     }
 
-    // bits must be: [0, 4]
+    // bits must be: [0, 4)
+    #[inline(always)]
     pub fn set_period(&mut self, bits: u8) {
         self.period_pow = match bits {
             0b00 => 0,
@@ -42,6 +43,7 @@ impl Timer {
         //info!("timer: {}, period: {}", self.timer_no, self.period);
     }
 
+    #[inline(always)]
     pub fn set_is_enabled(&mut self, enable: bool) {
         //info!("timer_no: {}, enabled: {}", self.timer_no, enable);
         if enable && !self.is_enabled {
@@ -52,6 +54,7 @@ impl Timer {
     }
 
     // returns true if overflow happened
+    #[inline(always)]
     pub fn clock(&mut self, bus: &mut Bus) -> bool {
         if !self.is_cascading {
             self.cur_cycle += config::TIMER_CLOCK_INTERVAL_CLOCKS as u16;
@@ -104,6 +107,7 @@ impl Timer {
         }
     }
 
+    #[inline(always)]
     pub fn cascade(&mut self) {
         assert!(self.is_cascading);
         self.cur_cycle += 1;
