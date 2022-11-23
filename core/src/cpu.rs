@@ -75,7 +75,6 @@ pub enum Flag {
 
 pub struct Cpu {
     //arm_instr_table: Vec<fn(&mut Cpu, &mut Bus) -> u32>,
-
     reg: [u32; 37],
     pub instr: u32,
     shifter_carry: u32, // 0 or 1 only
