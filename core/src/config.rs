@@ -9,7 +9,7 @@ pub const CPU_EXECUTION_INTERVAL_US: u64 =
     1000000u64 * CPU_EXECUTION_INTERVAL_CLOCKS as u64 / (16 * 1024 * 1024);
 
 // number of frames to pass before recording new FPS value
-pub const FPS_RECORD_INTERVAL: u32 = 120;
+pub const FPS_RECORD_INTERVAL: u64 = 120;
 
 pub const DEFAULT_CARTRIDGE_TYPE: CartridgeType = CartridgeType::Sram;
 

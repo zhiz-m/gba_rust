@@ -33,7 +33,8 @@ pub struct GBA {
     last_finished_time: u64,  // microseconds, continuous time
     last_fps_print_time: u64, // microseconds
 
-    frame_counter: u32,
+    last_fps_frame_counter: u64,
+    frame_counter: u64,
     fps: Option<f64>,
 
     started: bool,
@@ -83,6 +84,7 @@ impl GBA {
             last_finished_time: 0,
             last_fps_print_time: 0,
 
+            last_fps_frame_counter: 0,
             frame_counter: 0,
             fps: None,
 
@@ -93,22 +95,34 @@ impl GBA {
         //res.input_handler.process_input(&res.key_receiver, &mut res.bus);
     }
 
+    #[inline(always)]
     pub fn has_started(&self) -> bool {
         self.started
     }
 
+    #[inline(always)]
     pub fn get_screen_buffer(&mut self) -> Option<&ScreenBuffer> {
-        self.ppu.get_screen_buffer()
+        // if speeding up, only show once every 16 frames
+        //return self.ppu.get_screen_buffer();
+        if !self.input_handler.cur_speedup_state || (self.input_handler.cur_speedup_state && self.frame_counter & 0b1111 == 0){
+            self.ppu.get_screen_buffer()
+        }
+        else {
+            None
+        }
     }
 
+    #[inline(always)]
     pub fn get_sound_buffer(&mut self) -> Option<SoundBufferIt> {
         self.bus.apu.get_audio_buffer()
     }
 
+    #[inline(always)]
     pub fn reset_sound_buffer(&mut self) {
         self.bus.apu.clear_buffer();
     }
 
+    #[inline(always)]
     pub fn get_updated_save_state(&mut self) -> Option<&[Vec<u8>]> {
         if self.save_state_updated {
             self.save_state_updated = false;
@@ -118,19 +132,23 @@ impl GBA {
         }
     }
 
+    #[inline(always)]
     pub fn get_fps(&mut self) -> Option<f64> {
         self.fps.take()
     }
 
     // must be called prior to updating keys in each frame
+    #[inline(always)]
     pub fn input_frame_preprocess(&mut self) {
         self.input_handler.frame_preprocess()
     }
 
+    #[inline(always)]
     pub fn process_key(&mut self, key: KeyInput, is_pressed: bool) {
         self.input_handler.process_key(key, is_pressed);
     }
 
+    #[inline(always)]
     pub fn init(&mut self, current_time: u64) {
         self.last_finished_time = current_time;
         self.last_fps_print_time = current_time;
@@ -138,8 +156,15 @@ impl GBA {
         self.started = true;
     }
 
+    #[inline(always)]
+    pub fn require_time_update(&self) -> bool {
+         // if speeding up, require time once every 16 frames
+        !self.input_handler.cur_speedup_state || (self.input_handler.cur_speedup_state && self.frame_counter & 0b1111 == 0)
+    }
+
     /// on successful frame, returns the number of microseconds that the emulator clock is ahead of the supposed true GBA clock
-    pub fn process_frame(&mut self, current_time: u64) -> Result<u64, &'static str> {
+    #[inline(always)]
+    pub fn process_frame(&mut self, current_time: Option<u64>) -> Option<u64> {
         loop {
             match self.workflow_times.iter().min().unwrap().1 {
                 Workflow::Timer => {
@@ -156,11 +181,13 @@ impl GBA {
                 Workflow::Ppu => {
                     self.workflow_times[3].0 += self.ppu.clock(&mut self.bus);
                     if self.ppu.buffer_ready {
+                        let current_time = current_time?;
+                        
                         self.on_new_buffer(current_time);
 
                         //info!("arm count: {}, thumb count: {}", self.bus.cpu.arm_cnt, self.bus.cpu.thumb_cnt);
 
-                        return Ok(if self.last_finished_time > current_time {
+                        return Some(if self.last_finished_time > current_time {
                             self.last_finished_time - current_time
                         } else {
                             0
@@ -173,17 +200,22 @@ impl GBA {
                     }
 
                     self.frame_counter += 1;
+                    
+                    if let Some(current_time) = current_time{
+                        let frame_fps_diff = self.frame_counter - self.last_fps_frame_counter;
 
-                    if self.frame_counter == config::FPS_RECORD_INTERVAL {
-                        let since = current_time - self.last_fps_print_time;
-                        if since > 0 {
-                            let fps = config::FPS_RECORD_INTERVAL as f64 * 1000000. / since as f64;
-                            self.fps = Some(fps);
-                            self.last_fps_print_time = current_time;
-                            #[cfg(feature = "print_cps")]
-                            info!("frames per second: {:#.3}", fps);
+                        if frame_fps_diff >= config::FPS_RECORD_INTERVAL {
+                            let since = current_time - self.last_fps_print_time;
+                            if since > 0 {
+                                let fps = frame_fps_diff as f64 * 1000000. / since as f64;
+                                self.fps = Some(fps);
+                                self.last_fps_frame_counter = self.frame_counter;
+                                self.last_fps_print_time = current_time;
+                                #[cfg(feature = "print_cps")]
+                                info!("frames per second: {:#.3}", fps);
+                            }
+                            //self.frame_counter = 0;
                         }
-                        self.frame_counter = 0;
                     }
                     #[cfg(feature = "debug_instr")]
                     {
@@ -204,6 +236,7 @@ impl GBA {
     }
 
     // perform some IO
+    #[inline(always)]
     fn on_new_buffer(&mut self, current_time: u64) {
         // handle input once per frame
         //self.input_handler.process_input(&self.key_receiver, &mut self.bus);

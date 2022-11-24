@@ -129,16 +129,22 @@ fn main() {
                 .as_micros() as u64,
         );
         loop {
-            let sleep_micros = gba
-                .process_frame(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_micros() as u64,
+            let time = if gba.require_time_update(){
+                Some(SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros() as u64
                 )
-                .unwrap();
-            thread::sleep(Duration::from_micros(sleep_micros));
-
+            }
+            else{
+                None
+            };
+            if let Some(sleep_micros) = gba
+                .process_frame(
+                    time,
+                ){
+                thread::sleep(Duration::from_micros(sleep_micros));
+            }
             // video
             if let Some(screen_buffer) = gba.get_screen_buffer() {
                 if let Err(why) = tx1.send(screen_buffer.clone()) {
