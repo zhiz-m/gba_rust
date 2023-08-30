@@ -4,6 +4,7 @@ members = [
     "core",
     "frontends/desktop-native",
     "frontends/wasm",
+    "frontends/headless",
 ]
 
 default-members = [
