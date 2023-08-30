@@ -18,6 +18,10 @@ overflow-checks = false
 lto = true
 opt-level = 3
 
+[profile.release-symbols]
+inherits = "release"
+debug = true
+
 [profile.release-lto]
 inherits = "release"
 lto = "fat"

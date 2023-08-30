@@ -104,7 +104,18 @@ fn main() {
             .unwrap()
             .as_micros() as u64,
     );
+    let start_time = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap()
+    .as_micros() as u64;
     loop {
+        let current_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_micros() as u64;
+        if current_time - start_time > 10_000_000{
+            break;
+        }
         let sleep_micros = gba
             .process_frame(
                 SystemTime::now()
@@ -113,7 +124,7 @@ fn main() {
                     .as_micros() as u64,
             )
             .unwrap();
-        thread::sleep(Duration::from_micros(sleep_micros));
+        // thread::sleep(Duration::from_micros(sleep_micros));
 
         // video
         // if let Some(screen_buffer) = gba.get_screen_buffer() {

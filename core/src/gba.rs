@@ -141,7 +141,7 @@ impl GBA {
     /// on successful frame, returns the number of microseconds that the emulator clock is ahead of the supposed true GBA clock
     pub fn process_frame(&mut self, current_time: u64) -> Result<u64, &'static str> {
         loop {
-            match self.workflow_times.iter().min().unwrap().1 {
+            match self.workflow_times.iter().min_by(|x1,x2|x1.0.cmp(&x2.0)).unwrap().1 {
                 Workflow::Timer => {
                     self.bus.timer_clock();
                     self.workflow_times[0].0 += config::TIMER_CLOCK_INTERVAL_CLOCKS;
