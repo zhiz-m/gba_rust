@@ -9,7 +9,7 @@ use crate::{
 };
 
 // smaller values have priority.
-#[derive(PartialEq, PartialOrd, Eq, Ord, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum Workflow {
     Timer = 0,
     Cpu = 1,
@@ -141,7 +141,16 @@ impl GBA {
     /// on successful frame, returns the number of microseconds that the emulator clock is ahead of the supposed true GBA clock
     pub fn process_frame(&mut self, current_time: u64) -> Result<u64, &'static str> {
         loop {
-            match self.workflow_times.iter().min_by(|x1,x2|x1.0.cmp(&x2.0)).unwrap().1 {
+            let mut cur_min = 100_000_000;
+            let mut cur_ans = Workflow::Timer;
+            for x in self.workflow_times.iter(){
+                if x.0 < cur_min{
+                    cur_min = x.0;
+                    cur_ans = x.1;
+                }
+            }
+
+            match cur_ans {
                 Workflow::Timer => {
                     self.bus.timer_clock();
                     self.workflow_times[0].0 += config::TIMER_CLOCK_INTERVAL_CLOCKS;

@@ -103,8 +103,8 @@ impl DMA_Channel {
                 //else{
                 match self.timing_mode {
                     TimingMode::Immediate => true,
-                    TimingMode::HBlank => bus.hblank_dma,
                     TimingMode::VBlank => bus.vblank_dma,
+                    TimingMode::HBlank => bus.hblank_dma,
                     TimingMode::Fifo => {
                         match self.channel_no {
                             0 => {
