@@ -108,7 +108,9 @@ fn main() {
     .duration_since(UNIX_EPOCH)
     .unwrap()
     .as_micros() as u64;
+    let mut iters = 0;
     loop {
+        iters += 1;
         let current_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -149,4 +151,5 @@ fn main() {
 
         //info!("process frame");
     }
+    println!("iters: {}", iters);
 }

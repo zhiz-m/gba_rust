@@ -4,14 +4,14 @@ use log::warn;
 
 use crate::bus::{Bus, MemoryRegion};
 
-use std::{cmp, num::Wrapping};
+use std::num::Wrapping;
 
 #[derive(Clone, Copy)]
 pub struct Pixel(u8, u8, u8);
 
 impl Pixel {
     pub fn new(r: u8, g: u8, b: u8) -> Pixel {
-        Pixel(cmp::min(r, 31), cmp::min(g, 31), cmp::min(b, 31))
+        Pixel(r.min(31), g.min(31), b.min(31))
     }
 
     pub fn to_float(&self) -> (f32, f32, f32) {
@@ -37,7 +37,7 @@ impl Pixel {
 
 #[derive(Clone)]
 pub struct ScreenBuffer {
-    buffer: Box<[[Pixel; 240]; 160]>,
+    buffer: [[Pixel; 240]; 160],
 }
 
 impl Default for ScreenBuffer {
@@ -49,7 +49,7 @@ impl Default for ScreenBuffer {
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
         ScreenBuffer {
-            buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
+            buffer: [[Pixel::new(0, 0, 0); 240]; 160],
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
@@ -87,11 +87,11 @@ pub struct Ppu {
 
     is_hblank: bool,
     cur_line: u8, // current line being processed.
-    cur_scanline: Box<[Pixel; 240]>,
-    cur_scanline_front: Box<[(Pixel, PixelType, WindowType); 240]>,
-    cur_scanline_back: Box<[(Pixel, PixelType, WindowType); 240]>,
+    cur_scanline: [Pixel; 240],
+    cur_scanline_front: [(Pixel, PixelType, WindowType); 240],
+    cur_scanline_back: [(Pixel, PixelType, WindowType); 240],
 
-    window_scanlines: Box<[[bool; 240]; 4]>,
+    window_scanlines: [[bool; 240]; 4],
     active_windows: [bool; 4],
     window_flags: [u8; 4],
     is_windowing_active: bool,
@@ -117,15 +117,11 @@ impl Ppu {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: Box::new([Pixel::new(0, 0, 0); 240]),
-            cur_scanline_front: Box::new(
-                [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
-            ),
-            cur_scanline_back: Box::new(
-                [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
-            ),
+            cur_scanline: [Pixel::new(0, 0, 0); 240],
+            cur_scanline_front: [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+            cur_scanline_back: [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
 
-            window_scanlines: Box::new([[true; 240]; 4]),
+            window_scanlines:[[true; 240]; 4],
             active_windows: [false; 4],
             window_flags: [0; 4],
             is_windowing_active: false,
@@ -438,6 +434,15 @@ impl Ppu {
 
         let i_rel = self.cur_line as u16 - y;
 
+        let base_p_addr = 0x20 + 0x10 * (bg_num - 2);
+        let pa = bus.read_halfword_raw(base_p_addr, MemoryRegion::IO) as i16 as i32;
+        let pb = bus.read_halfword_raw(base_p_addr + 2, MemoryRegion::IO) as i16 as i32;
+        let pc = bus.read_halfword_raw(base_p_addr + 4, MemoryRegion::IO) as i16 as i32;
+        let pd = bus.read_halfword_raw(base_p_addr + 6, MemoryRegion::IO) as i16 as i32;
+
+        let dx = bus.read_word_raw(0x28 + 0x10 * (bg_num - 2), MemoryRegion::IO) as i32;
+        let dy = bus.read_word_raw(0x2c + 0x10 * (bg_num - 2), MemoryRegion::IO) as i32;
+
         for j in 0..240 {
             let j_rel = j - x;
 
@@ -448,15 +453,6 @@ impl Ppu {
             let mut pal_bank = 0; // NOTE: pal_bank is unused for affine backgrounds
 
             if is_affine {
-                let base_p_addr = 0x20 + 0x10 * (bg_num - 2);
-                let pa = bus.read_halfword_raw(base_p_addr, MemoryRegion::IO) as i16 as i32;
-                let pb = bus.read_halfword_raw(base_p_addr + 2, MemoryRegion::IO) as i16 as i32;
-                let pc = bus.read_halfword_raw(base_p_addr + 4, MemoryRegion::IO) as i16 as i32;
-                let pd = bus.read_halfword_raw(base_p_addr + 6, MemoryRegion::IO) as i16 as i32;
-
-                let dx = bus.read_word_raw(0x28 + 0x10 * (bg_num - 2), MemoryRegion::IO) as i32;
-                let dy = bus.read_word_raw(0x2c + 0x10 * (bg_num - 2), MemoryRegion::IO) as i32;
-
                 let cy = self.cur_line as i32;
                 let cx = j as i32;
 
@@ -884,7 +880,7 @@ impl Ppu {
         is_sprite: bool,
         bus: &Bus,
     ) -> Option<Pixel> {
-        if palette_index == 0 || (is_4bpp && palette_index & 0b1111 == 0) {
+        if palette_index == 0 || (is_4bpp && (palette_index & 0b1111) == 0) {
             return None;
         }
         let mut addr = palette_index as u32 * 2;

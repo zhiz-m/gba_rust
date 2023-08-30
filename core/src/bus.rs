@@ -1,3 +1,5 @@
+use std::ops::{Index, IndexMut};
+
 use log::{info, warn};
 
 use crate::{algorithm, apu::Apu, config, cpu::Cpu, dma_channel::DMA_Channel, timer::Timer};
@@ -54,8 +56,66 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
     }
 }
 
+/*
+vec![0; 0x4000],
+            vec![0; 0x40000],
+            vec![0; 0x8000],
+            vec![0; 0x400],
+            vec![0; 0x400],
+            vec![0; 0x18000],
+            vec![0; 0x400],
+            vec![0; 0x2000000],
+            vec![0; 0x20000],
+*/
+
+// const MEM_REGION_SIZES: [usize; 9] = [0x4000, 0x40000, 0x8000, 0x400, 0x400, 0x18000, 0x400, 0x2000000, 0x20000];
+const MEM_REGION_OFFSET: [usize; 10] = [0x0, 0x4000, 0x44000, 0x4c000, 0x4c400, 0x4c800, 0x64800, 0x64c00, 0x2064c00, 0x2084c00];
+const MEM_REGION_TOTAL: usize = 0x2084c00;
+
+struct FlatMemory{
+    mem: Vec<u8>
+}
+
+impl Default for FlatMemory{
+    fn default() -> Self {
+        Self { mem: vec![0; MEM_REGION_TOTAL] }
+    }
+}
+
+impl Index<usize> for FlatMemory{
+    type Output = [u8];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.mem[MEM_REGION_OFFSET[index]..MEM_REGION_OFFSET[index+1]]
+    }
+}
+
+impl IndexMut<usize> for FlatMemory{
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.mem[MEM_REGION_OFFSET[index]..MEM_REGION_OFFSET[index+1]]
+    }
+}
+
+impl Index<(usize, usize)> for FlatMemory{
+    type Output = u8;
+
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        &self.mem[MEM_REGION_OFFSET[index.0] + index.1]
+    }
+}
+
+impl IndexMut<(usize, usize)> for FlatMemory{
+    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
+        &mut self.mem[MEM_REGION_OFFSET[index.0] + index.1]
+    }
+}
+
+impl FlatMemory{
+
+}
+
 pub struct Bus {
-    mapped_mem: Vec<Vec<u8>>,
+    mapped_mem: FlatMemory,
 
     cartridge_type: CartridgeType,
 
@@ -91,17 +151,19 @@ impl Bus {
     ) -> Bus {
         //let mut mem = vec![0; MEM_MAX];
 
-        let mut mapped_mem = vec![
-            vec![0; 0x4000],
-            vec![0; 0x40000],
-            vec![0; 0x8000],
-            vec![0; 0x400],
-            vec![0; 0x400],
-            vec![0; 0x18000],
-            vec![0; 0x400],
-            vec![0; 0x2000000],
-            vec![0; 0x20000],
-        ];
+        // let mut mapped_mem = [
+        //     vec![0; 0x4000],
+        //     vec![0; 0x40000],
+        //     vec![0; 0x8000],
+        //     vec![0; 0x400],
+        //     vec![0; 0x400],
+        //     vec![0; 0x18000],
+        //     vec![0; 0x400],
+        //     vec![0; 0x2000000],
+        //     vec![0; 0x20000],
+        // ];
+
+        let mut mapped_mem = FlatMemory::default();
 
         // load BIOS
         //let bios_path = env::var("GBA_RUST_BIOS").unwrap();
@@ -216,32 +278,32 @@ impl Bus {
 
     #[inline(always)]
     pub fn read_byte_raw(&self, addr: usize, region: MemoryRegion) -> u8 {
-        self.mapped_mem[region as usize][addr]
+        self.mapped_mem[(region as usize,addr)]
     }
 
     #[inline(always)]
     pub fn read_halfword_raw(&self, addr: usize, region: MemoryRegion) -> u16 {
-        self.mapped_mem[region as usize][addr] as u16
-            + ((self.mapped_mem[region as usize][addr + 1] as u16) << 8)
+        self.mapped_mem[(region as usize,addr)] as u16
+            + ((self.mapped_mem[(region as usize,addr + 1)] as u16) << 8)
     }
 
     #[inline(always)]
     pub fn read_word_raw(&self, addr: usize, region: MemoryRegion) -> u32 {
-        self.mapped_mem[region as usize][addr] as u32
-            + ((self.mapped_mem[region as usize][addr + 1] as u32) << 8)
-            + ((self.mapped_mem[region as usize][addr + 2] as u32) << 16)
-            + ((self.mapped_mem[region as usize][addr + 3] as u32) << 24)
+        self.mapped_mem[(region as usize,addr)] as u32
+            + ((self.mapped_mem[(region as usize,addr + 1)] as u32) << 8)
+            + ((self.mapped_mem[(region as usize,addr + 2)] as u32) << 16)
+            + ((self.mapped_mem[(region as usize,addr + 3)] as u32) << 24)
     }
 
     #[inline(always)]
     pub fn store_byte_raw(&mut self, addr: usize, region: MemoryRegion, val: u8) {
-        self.mapped_mem[region as usize][addr] = val;
+        self.mapped_mem[(region as usize,addr)] = val;
     }
 
     #[inline(always)]
     pub fn store_halfword_raw(&mut self, addr: usize, region: MemoryRegion, val: u16) {
-        self.mapped_mem[region as usize][addr] = (val & 0b11111111) as u8;
-        self.mapped_mem[region as usize][addr + 1] = ((val >> 8) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize,addr)] = (val & 0b11111111) as u8;
+        self.mapped_mem[(region as usize,addr + 1)] = ((val >> 8) & 0b11111111) as u8;
     }
 
     /*pub fn store_word_raw(&mut self, addr: usize, region: MemoryRegion, val: u32) {
@@ -336,16 +398,16 @@ impl Bus {
                         0x109 => (self.timers[2].timer_count >> 8) as u8,
                         0x10c => self.timers[3].timer_count as u8,
                         0x10d => (self.timers[3].timer_count >> 8) as u8,
-                        _ => self.mapped_mem[region as usize][addr],
+                        _ => self.mapped_mem[(region as usize,addr)],
                     }
                 } else {
-                    self.mapped_mem[region as usize][addr]
+                    self.mapped_mem[(region as usize,addr)]
                 }
             }
             MemoryRegion::CartridgeSram => {
                 //info!("read from SRAM, addr: {:#x}, val: {:#x}", addr, self.mem[addr]);
                 match self.cartridge_type {
-                    CartridgeType::Sram => self.mapped_mem[region as usize][addr],
+                    CartridgeType::Sram => self.mapped_mem[(region as usize,addr)],
                     CartridgeType::Flash64 | CartridgeType::Flash128 => {
                         self.internal_read_byte_flash(addr)
                     }
@@ -370,11 +432,11 @@ impl Bus {
                 } else {
                     //self.cpu.last_fetched_bios_instr &= !range;
                     //self.cpu.last_fetched_bios_instr = (self.mapped_mem[region as usize][addr] as u32) << offset;
-                    self.mapped_mem[region as usize][addr]
+                    self.mapped_mem[(region as usize,addr)]
                 }
             }
             MemoryRegion::Illegal => 0,
-            _ => self.mapped_mem[region as usize][addr],
+            _ => self.mapped_mem[(region as usize,addr)],
         }
     }
 
@@ -403,15 +465,15 @@ impl Bus {
                             // current bit 1, incoming bit 1 -> result = 0
                             // current bit 1, incoming bit 0 -> result = 1
                             // current bit 0, incoming bit 1 -> result = 1
-                            self.mapped_mem[region as usize][addr] ^= val;
+                            self.mapped_mem[(region as usize,addr)] ^= val;
                             self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
                             return;
                         }
 
                         // special handling for DMA
                         0xbb | 0xc7 | 0xd3 | 0xdf => {
-                            let old_val = self.mapped_mem[region as usize][addr];
-                            self.mapped_mem[region as usize][addr] = val;
+                            let old_val = self.mapped_mem[(region as usize,addr)];
+                            self.mapped_mem[(region as usize,addr)] = val;
                             let channel_no = (addr - 0xbb) / 12;
                             //info!("addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
                             let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0 {
@@ -464,7 +526,7 @@ impl Bus {
 
                         // special handling for square sound channels; reset
                         0x65 | 0x6d => {
-                            self.mapped_mem[region as usize][addr] = val;
+                            self.mapped_mem[(region as usize,addr)] = val;
                             let square_chan_num = match addr {
                                 0x65 => 0,
                                 0x6d => 1,
@@ -481,7 +543,7 @@ impl Bus {
 
                         // special handling for wave sound channel (official name: DMG channel 3)
                         0x75 => {
-                            self.mapped_mem[region as usize][addr] = val;
+                            self.mapped_mem[(region as usize,addr)] = val;
                             if (val >> 7) & 1 > 0 {
                                 let ptr = &mut self.apu as *mut Apu;
                                 unsafe {
@@ -541,8 +603,8 @@ impl Bus {
                         // special handling for inserting into wave sound channel bank
                         0x90..=0x9f => {
                             let ind = addr - 0x90;
-                            let bank = (self.mapped_mem[region as usize][0x70] >> 5)
-                                & !(self.mapped_mem[region as usize][0x70] >> 6)
+                            let bank = (self.mapped_mem[(region as usize,0x70)] >> 5)
+                                & !(self.mapped_mem[(region as usize,0x70)] >> 6)
                                 & 1;
                             self.apu.wave_bank[bank as usize][ind] = val;
 
@@ -552,7 +614,7 @@ impl Bus {
 
                         // special handling for wave channel disable/enable
                         0x70 => {
-                            if (val ^ self.mapped_mem[region as usize][addr]) >> 7 > 0 {
+                            if (val ^ self.mapped_mem[(region as usize,addr)]) >> 7 > 0 {
                                 self.apu.wave_sweep_cnt = 0;
                             }
                         }
@@ -560,14 +622,14 @@ impl Bus {
                         0x84 => {
                             if (val >> 7) & 1 == 0 {
                                 for i in 0x60..=0x81 {
-                                    self.mapped_mem[region as usize][i] = 0;
+                                    self.mapped_mem[(region as usize,i)] = 0;
                                 }
                             }
                         }
                         _ => {}
                     }
                 }
-                self.mapped_mem[region as usize][addr] = val;
+                self.mapped_mem[(region as usize,addr)] = val;
             }
             MemoryRegion::Bios => {
                 // do nothing, writing to BIOS is illegal
@@ -579,7 +641,7 @@ impl Bus {
                         self.internal_write_byte_flash(addr, val);
                     }
                     CartridgeType::Sram => {
-                        self.mapped_mem[region as usize][addr] = val;
+                        self.mapped_mem[(region as usize,addr)] = val;
                     }
                     _ => {
                         warn!(
@@ -593,7 +655,7 @@ impl Bus {
                 //warn!("illegal memory write");
             }
             _ => {
-                self.mapped_mem[region as usize][addr] = val;
+                self.mapped_mem[(region as usize,addr)] = val;
             }
         };
     }
@@ -624,13 +686,13 @@ impl Bus {
             }
             _ => match self.cartridge_type {
                 CartridgeType::Flash64 => {
-                    self.mapped_mem[MemoryRegion::CartridgeSram as usize]
-                        [config::FLASH64_MEM_START + (addr & 0xffff)]
+                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
+                        config::FLASH64_MEM_START + (addr & 0xffff))]
                 }
                 CartridgeType::Flash128 => {
-                    self.mapped_mem[MemoryRegion::CartridgeSram as usize][config::FLASH128_MEM_START
+                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,config::FLASH128_MEM_START
                         + (addr & 0xffff)
-                        + ((self.cartridge_type_state[3] as usize) << 16)]
+                        + ((self.cartridge_type_state[3] as usize) << 16))]
                 }
                 _ => unreachable!("cartridge type is not flash"),
             },
@@ -643,14 +705,14 @@ impl Bus {
             3 => {
                 match self.cartridge_type {
                     CartridgeType::Flash64 => {
-                        self.mapped_mem[MemoryRegion::CartridgeSram as usize]
-                            [config::FLASH64_MEM_START + (addr & 0xffff)] = val;
+                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
+                            config::FLASH64_MEM_START + (addr & 0xffff))] = val;
                     }
                     CartridgeType::Flash128 => {
-                        self.mapped_mem[MemoryRegion::CartridgeSram as usize]
-                            [config::FLASH128_MEM_START
+                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
+                            config::FLASH128_MEM_START
                                 + (addr & 0xffff)
-                                + ((self.cartridge_type_state[3] as usize) << 16)] = val;
+                                + ((self.cartridge_type_state[3] as usize) << 16))] = val;
                     }
                     _ => unreachable!("cartridge type is not flash"),
                 }
@@ -689,7 +751,7 @@ impl Bus {
                                     _ => unreachable!("cartridge type is not flash"),
                                 };
                                 for i in addr..addr + 0x1000 {
-                                    self.mapped_mem[MemoryRegion::CartridgeSram as usize][i] = 0xff;
+                                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,i)] = 0xff;
                                 }
                                 self.cartridge_type_state[0] = 0;
                                 self.cartridge_type_state[1] = 0;
@@ -737,7 +799,7 @@ impl Bus {
                         _ => unreachable!("logical error: execute_flash_storage_command is caled, but cartridge type is not FLASH64 or FLASH128"),
                     };
                     for i in start..end {
-                        self.mapped_mem[MemoryRegion::CartridgeSram as usize][i] = 0xff;
+                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,i)] = 0xff;
                     }
                 }
                 self.cartridge_type_state[4] = 0;
