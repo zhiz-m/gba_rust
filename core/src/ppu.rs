@@ -87,11 +87,11 @@ pub struct Ppu {
 
     is_hblank: bool,
     cur_line: u8, // current line being processed.
-    cur_scanline: [Pixel; 240],
-    cur_scanline_front: [(Pixel, PixelType, WindowType); 240],
-    cur_scanline_back: [(Pixel, PixelType, WindowType); 240],
+    cur_scanline: Vec<Pixel>,
+    cur_scanline_front: Vec<(Pixel, PixelType, WindowType)>,
+    cur_scanline_back: Vec<(Pixel, PixelType, WindowType)>,
 
-    window_scanlines: [[bool; 240]; 4],
+    window_scanlines: [Vec<bool>; 4],
     active_windows: [bool; 4],
     window_flags: [u8; 4],
     is_windowing_active: bool,
@@ -117,11 +117,11 @@ impl Ppu {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: [Pixel::new(0, 0, 0); 240],
-            cur_scanline_front: [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
-            cur_scanline_back: [(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+            cur_scanline: vec![Pixel::new(0, 0, 0); 240],
+            cur_scanline_front: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+            cur_scanline_back: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
 
-            window_scanlines:[[true; 240]; 4],
+            window_scanlines: std::array::from_fn(|_|vec![true; 240]),
             active_windows: [false; 4],
             window_flags: [0; 4],
             is_windowing_active: false,

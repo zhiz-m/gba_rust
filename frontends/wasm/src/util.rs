@@ -1,7 +1,7 @@
 use gba_core::{marshall_save_state, GBA, NUM_SAVE_STATES};
 use std::{cell::RefCell, rc::Rc};
 use wasm_bindgen::{prelude::*, Clamped, JsCast};
-use web_sys::{CanvasRenderingContext2d, HtmlDivElement};
+use web_sys::{CanvasRenderingContext2d, HtmlDivElement, AudioContext};
 
 pub struct HtmlState {
     pub raw_screen_buffer: Vec<u8>,
@@ -133,10 +133,10 @@ fn schedule_gba(
             let mut html_state_inner = html_state.borrow_mut();
 
             //console::log_1(&"gba_frame_start".into());
+            let time_micros = (js_sys::Date::now() * 1000.) as u64;
             if !gba.has_started() {
                 gba.init(time_micros);
             }
-            let time_micros = (js_sys::Date::now() * 1000.) as u64;
             let sleep_micros = gba.process_frame(time_micros).unwrap();
             //let time_micros2 = (js_sys::Date::now() * 1000.) as u64;
             //console::log_2(&"frame time ms:".into(), &(time_micros2-time_micros).into());
@@ -166,7 +166,21 @@ fn schedule_gba(
                 .unwrap();
 
             // audio
-            if gba.get_sound_buffer().is_some() {
+            if let Some(it) = gba.get_sound_buffer(){
+                let audio_data: (Vec<_>, Vec<_>) = it.unzip();
+                let audio_context = AudioContext::new().unwrap();
+                let source = audio_context.create_buffer_source().unwrap();
+                let audio_buffer = audio_context.create_buffer(2, 10, 48000f32).unwrap();
+
+                audio_buffer.copy_to_channel(&audio_data.0[..], 0).unwrap();
+                audio_buffer.copy_to_channel(&audio_data.1[..], 1).unwrap();
+
+                source.set_buffer(Some(&audio_buffer));
+                source
+                    .connect_with_audio_node(&audio_context.destination())
+                    .unwrap();
+                source.connect_with_audio_node(&audio_context.destination()).unwrap();
+                source.start().unwrap();
                 gba.reset_sound_buffer();
             }
 
@@ -185,6 +199,7 @@ fn schedule_gba(
 
             // schedule next render
             //console::log_1(&"gba_frame_end".into());
+            // console::log_1(&(sleep_micros.to_string()).into()) ;
             schedule_gba(gba_rc.clone(), sleep_micros, html_state.clone()).unwrap();
         }
     }) as Box<dyn FnMut(_)>);

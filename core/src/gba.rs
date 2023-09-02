@@ -118,6 +118,10 @@ impl GBA {
         }
     }
 
+    pub fn get_save_state(&self) -> &[Vec<u8>]{
+        &self.save_state
+    }
+
     pub fn get_fps(&mut self) -> Option<f64> {
         self.fps.take()
     }

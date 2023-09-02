@@ -1,32 +1,179 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="UTF-8">
-    <title>gba_rust</title>
-  </head>
-  <body>
-    <script src="index.js"></script>
-    <div>
-      <label>
-        select BIOS file
-        <input type="file" id="bios_input">
-      </label>
-      <label style="display:block;">
-        select ROM file
-        <input type="file" id="rom_input">
-      </label>
-      <label style="display:block;">
-        select save state
-        <input type="file" id="save_state_input">
-      </label>
-      <label style="display:block;">
-        select save bank (1-5)
-        <input type="text" id="save_bank_input">
-      </label>
-      <button id="reset_button" style="display:block;">Reset</button>
-      <canvas id="gba_rust_canvas" style="display:block;"></canvas>
-      <div style="display:block;" id="fps_label">
+
+<head>
+  <meta charset="UTF-8">
+  <title>gba_rust</title>
+</head>
+<style>
+  table,
+  th,
+  td {
+    border: 1px solid black;
+  }
+
+  .container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+
+  .container2 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: row;
+  }
+
+  .container3 {
+    display: flex;
+    margin: 10px;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    border: 1px solid black;
+    flex-basis: 0;
+    flex-grow: 1;
+  }
+</style>
+
+<body>
+  <script src="index.js"></script>
+  <div class="container">
+    <h3>Gameboy Advance emulator</h3>
+    <div class="container2">
+      <div class="container3" style="gap: 10px;">
+
+        <canvas id="gba_rust_canvas" style="display:block;"></canvas>
+        <div style="display:block;" id="fps_label">
+        </div>
+        <br />
+
+        <label>
+          select BIOS file
+          <input type="file" id="bios_input">
+        </label>
+        <label style="display:block;">
+          select ROM file
+          <input type="file" id="rom_input">
+        </label>
+        <label style="display:block;">
+          select save file
+          <input type="file" id="save_state_input">
+        </label>
+        <span style="display: inline;">
+          <label>
+            select save slot to load from (1-5)
+          </label>
+          <select id="save_slot">
+            <option label="1">1</option>
+            <option label="2">2</option>
+            <option label="3">3</option>
+            <option label="4">4</option>
+            <option label="5">4</option>
+          </select>
+        </span>
+        
+        <span style="display: inline;">
+          <button id="reset_button">Start / Restart</button>
+          <button id="download_save_button">Download Save</button>
+        </span>
       </div>
+      <div class="container3">
+        <b>How to start:</b>
+        <div></div>
+        <ol type="1">
+          <li>Upload your GBA BIOS (for legal reasons, can't include this here). Easy to find online with google, should
+            be
+            a 4KB file. </li>
+          <li>Upload your game ROM</li>
+          <li>(optional) upload your save file and select which save slot to load from</li>
+          <li>Press 'Start / Restart'. Enjoy!</li>
+        </ol>
+        <b>
+          Official Controls:
+        </b>
+
+        <table>
+          <colgroup>
+            <col class="white" />
+            <col class="blue" />
+          </colgroup>
+          <tr>
+            <th>Key input</th>
+            <th>Corresponding GBA control</th>
+          </tr>
+          <tr>
+            <td>Z</td>
+            <td>A</td>
+          </tr>
+          <tr>
+            <td>X</td>
+            <td>B</td>
+          </tr>
+          <tr>
+            <td>Q</td>
+            <td>Select</td>
+          </tr>
+          <tr>
+            <td>W</td>
+            <td>Start</td>
+          </tr>
+          <tr>
+            <td>A</td>
+            <td>L</td>
+          </tr>
+          <tr>
+            <td>S</td>
+            <td>R</td>
+          </tr>
+          <tr>
+            <td>Arrow keys</td>
+            <td>Directional control pad</td>
+          </tr>
+        </table>
+        
+        <br/>
+
+        <b>
+          Extra Controls:
+        </b>
+
+        <table>
+          <colgroup>
+            <col class="white" />
+            <col class="blue" />
+          </colgroup>
+          <tr>
+            <th>Key input</th>
+            <th>Function</th>
+          </tr>
+          <tr>
+            <td>Numbers 1-5</td>
+            <td>Save game to slot 1-5</td>
+          </tr>
+          <tr>
+            <td><b><i>Space (hold)</i></b></td>
+            <td>Speeds up the FPS to the max your CPU / browser runtime can
+              handle</td>
+          </tr>
+        </table>
+
+        <br />
+
+      </div>
+    </div>
+    <br />
+    <div class="container3">
+      <b>About:</b>
+      <ul>
+        <li>Emulator written in Rust, compiled to WebAssembly, with a wrapper written in
+          JavaScript.</li>
+        <li>Source code: <a href="https://github.com/zhiz-m/gba_rust">https://github.com/zhiz-m/gba_rust</a></li>
+      </ul>
+    </div>
   </div>
-  </body>
+</body>
+
 </html>

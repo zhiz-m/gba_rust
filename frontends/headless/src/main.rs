@@ -8,7 +8,7 @@ use std::{
     fs::{self, read},
     path::Path,
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH}, sync::mpsc,
 };
 
 use crate::logger::init_logger;
@@ -89,6 +89,17 @@ fn main() {
         .map(|bin| gba_core::marshall_save_state(&bin))
         .ok();
 
+    // screen buffer
+    let (tx1, rx1) = mpsc::channel();
+
+    let (tx2, rx2) = mpsc::channel();
+
+    // audio
+    let (tx3, rx3) = mpsc::channel();
+
+    // fps
+    let (tx4, rx4) = mpsc::channel();
+
     let mut gba = gba_core::GBA::new(
         &bios_bin,
         &rom_bin,
@@ -104,6 +115,9 @@ fn main() {
             .unwrap()
             .as_micros() as u64,
     );
+
+    gba.process_key(gba_core::KeyInput::Speedup, true);
+
     let start_time = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap()
@@ -129,25 +143,35 @@ fn main() {
         // thread::sleep(Duration::from_micros(sleep_micros));
 
         // video
-        // if let Some(screen_buffer) = gba.get_screen_buffer() {
-        //     if let Err(why) = tx1.send(screen_buffer.clone()) {
-        //         warn!("   screenbuf sending error: {}", why);
-        //     }
-        // }
+        if let Some(screen_buffer) = gba.get_screen_buffer() {
+            if let Err(why) = tx1.send(screen_buffer.clone()) {
+                warn!("   screenbuf sending error: {}", why);
+            }
+        }
 
         // audio
-        if let Some(_) = gba.get_sound_buffer() {
-            // it.for_each(|_data| {});
+        if let Some(it) = gba.get_sound_buffer() {
+            it.for_each(|data| tx3.send(data).unwrap());
             gba.reset_sound_buffer();
         }
 
         // saves
-        // if let Some(save_state) = gba.get_updated_save_state() {
-        //     fs::write(&rom_save_path, save_state[..].concat()).unwrap();
-        //     info!("save written to {}", &rom_save_path);
-        // }
+        if let Some(save_state) = gba.get_updated_save_state() {
+            fs::write(&rom_save_path, save_state[..].concat()).unwrap();
+            info!("save written to {}", &rom_save_path);
+        }
+
+        // fps
+        if let Some(fps) = gba.get_fps() {
+            tx4.send(fps).unwrap();
+        }
 
         gba.input_frame_preprocess();
+
+        // input
+        while let Ok((key, is_pressed)) = rx2.try_recv() {
+            gba.process_key(key, is_pressed);
+        }
 
         //info!("process frame");
     }

@@ -127,6 +127,11 @@ impl<'a> Iterator for SoundBufferIt<'a> {
     }
 }
 
+impl<'a> SoundBufferIt<'a>{
+    pub fn len(&self) -> usize{
+        self.data.iter().map(|x|x.len()).sum()
+    }
+}
 pub struct Apu {
     //  ------- square sound channels
     square_length: [u32; 2],

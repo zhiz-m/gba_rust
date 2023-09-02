@@ -23,6 +23,32 @@ pub enum KeyInput {
     Save4 = 15,
 }
 
+impl TryFrom<u8> for KeyInput{
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        Ok(match value{
+            0 => KeyInput::A,
+            1 => KeyInput::B,
+            2 => KeyInput::Select,
+            3 => KeyInput::Start,
+            4 => KeyInput::Right,
+            5 => KeyInput::Left,
+            6 => KeyInput::Up,
+            7 => KeyInput::Down,
+            8 => KeyInput::R,
+            9 => KeyInput::L,
+            10 => KeyInput::Speedup,
+            11 => KeyInput::Save0,
+            12 => KeyInput::Save1,
+            13 => KeyInput::Save2,
+            14 => KeyInput::Save3,
+            15 => KeyInput::Save4,
+            _ => return Err(())
+        })
+    }
+}
+
 struct KeyBuffer(u16);
 
 impl KeyBuffer {
