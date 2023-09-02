@@ -91,7 +91,7 @@ import("../pkg/index.js").then((rust_wasm) => {
         else if (key == "5") num = 15;
         else return;
 
-        console.log(`key press: ${key}, ${num}, ${is_pressed}`);
+        // console.log(`key press: ${key}, ${num}, ${is_pressed}`);
         
         if(keys) keys.push([num, is_pressed]);
     }
@@ -213,7 +213,7 @@ import("../pkg/index.js").then((rust_wasm) => {
                 gba.input_frame_preprocess();
 
                 for (let i = 0; i < keys.length; i++) {
-                    console.log(`key send ${keys[i][0]} ${keys[i][1]}`);
+                    // console.log(`key send ${keys[i][0]} ${keys[i][1]}`);
                     gba.key_input(keys[i][0], keys[i][1]);
                 }
 
