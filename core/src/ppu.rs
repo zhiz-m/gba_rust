@@ -37,7 +37,7 @@ impl Pixel {
 
 #[derive(Clone)]
 pub struct ScreenBuffer {
-    buffer: [[Pixel; 240]; 160],
+    buffer: Box<[[Pixel; 240]; 160]>,
 }
 
 impl Default for ScreenBuffer {
@@ -49,7 +49,7 @@ impl Default for ScreenBuffer {
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
         ScreenBuffer {
-            buffer: [[Pixel::new(0, 0, 0); 240]; 160],
+            buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
