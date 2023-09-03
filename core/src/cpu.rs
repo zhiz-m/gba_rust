@@ -82,7 +82,7 @@ pub struct Cpu {
     operand2: u32,
     reg_dest: u32,
     pub actual_pc: u32,
-    pipeline_instr: VecDeque<u32>,
+    pub pipeline_instr: VecDeque<u32>,
 
     op_mode: OperatingMode,
 

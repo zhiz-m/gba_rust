@@ -25,11 +25,13 @@ pub enum MemoryRegion {
     Cartridge = 7,
     CartridgeSram = 8,
     Illegal = 9,
+    CartridgeUpper = 10,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum CartridgeType {
-    Eeprom,
+    Eeprom512,
+    Eeprom8192,
     Sram,
     Flash64,
     Flash128,
@@ -50,7 +52,7 @@ fn derive_cartridge_type(cartridge: &[u8]) -> CartridgeType {
             0 => CartridgeType::Sram,
             1 | 2 => CartridgeType::Flash64,
             3 => CartridgeType::Flash128,
-            4 => CartridgeType::Eeprom,
+            4 => CartridgeType::Eeprom8192,
             _ => unreachable!("logical error, invalid result from u8_search"),
         },
     }
@@ -117,7 +119,7 @@ impl FlatMemory{
 pub struct Bus {
     mapped_mem: FlatMemory,
 
-    cartridge_type: CartridgeType,
+    pub cartridge_type: CartridgeType,
 
     // 0-2: cartridge command flags
     // 3: cartridge page number (for 218kb only, 0 or 1)
@@ -128,6 +130,9 @@ pub struct Bus {
     //     val=3: write single byte mode
     //     val=4: select page number mode
     cartridge_type_state: [u8; 7],
+    pub eeprom_is_read: bool,
+    pub eeprom_read_offset: usize,
+    pub eeprom_write_successful: bool,
 
     pub is_any_dma_active: bool,
     pub hblank_dma: bool,
@@ -186,7 +191,8 @@ impl Bus {
                     "FLASH" => CartridgeType::Flash64,
                     "FLASH512" => CartridgeType::Flash64,
                     "FLASH1M" => CartridgeType::Flash128,
-                    "EEPROM" => CartridgeType::Flash128,
+                    "EEPROM512" => CartridgeType::Eeprom512,
+                    "EEPROM8192" => CartridgeType::Eeprom8192,
                     _ => unreachable!(),
                 }
             }
@@ -204,6 +210,9 @@ impl Bus {
 
             cartridge_type,
             cartridge_type_state: [0; 7],
+            eeprom_is_read: false,
+            eeprom_read_offset: 0,
+            eeprom_write_successful: false,
 
             is_any_dma_active: false,
             hblank_dma: false,
@@ -306,19 +315,25 @@ impl Bus {
         self.mapped_mem[(region as usize,addr + 1)] = ((val >> 8) & 0b11111111) as u8;
     }
 
-    /*pub fn store_word_raw(&mut self, addr: usize, region: MemoryRegion, val: u32) {
-        self.mapped_mem[region as usize][addr] = (val & 0b11111111) as u8;
-        self.mapped_mem[region as usize][addr + 1] = ((val >> 8) & 0b11111111) as u8;
-        self.mapped_mem[region as usize][addr + 2] = ((val >> 16) & 0b11111111) as u8;
-        self.mapped_mem[region as usize][addr + 3] = ((val >> 24) & 0b11111111) as u8;
-    }*/
+    #[inline(always)]
+    pub fn store_word_raw(&mut self, addr: usize, region: MemoryRegion, val: u32) {
+        self.mapped_mem[(region as usize,addr)] = (val & 0b11111111) as u8;
+        self.mapped_mem[(region as usize,addr + 1)] = ((val >> 8) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize,addr + 2)] = ((val >> 16) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize,addr + 3)] = ((val >> 24) & 0b11111111) as u8;
+    }
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
     #[inline(always)]
     pub fn cpu_interrupt(&mut self, interrupt: u16) {
         let reg_if = self.read_halfword_raw(0x202, MemoryRegion::IO);
         let cur_reg_if = interrupt & self.read_halfword_raw(0x200, MemoryRegion::IO);
-        self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+        // self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
+        self.mapped_mem[(MemoryRegion::IO as usize,0x202)] ^= (cur_reg_if & !(reg_if)) as u8;
+        self.mapped_mem[(MemoryRegion::IO as usize,0x203)] ^= ((cur_reg_if & !(reg_if)) >> 8) as u8;
+        self.mapped_mem[(MemoryRegion::IO as usize,0x202)] &= !0b10000000;
+        self.mapped_mem[(MemoryRegion::IO as usize,0x203)] &= !0b00100000;
+        self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
     }
 
     #[inline(always)]
@@ -435,7 +450,22 @@ impl Bus {
                     self.mapped_mem[(region as usize,addr)]
                 }
             }
-            MemoryRegion::Illegal => 0,
+            MemoryRegion::CartridgeUpper => {
+                if self.eeprom_write_successful && (addr == 0x1000000 || addr == 0x1ffff00) {
+                    self.eeprom_write_successful = false;
+                    1
+                }
+                else if (self.cartridge_type == CartridgeType::Eeprom512 || self.cartridge_type == CartridgeType::Eeprom8192) && (addr == 0x1000001 || addr == 0x1ffff01){
+                    0
+                }
+                else{
+                    self.mapped_mem[(MemoryRegion::Cartridge as usize,addr)]
+                }
+            }
+            MemoryRegion::Illegal => {
+                let range = (addr & 0b11) << 3;
+                (self.cpu.pipeline_instr.get(1).unwrap() >> range) as u8
+            },
             _ => self.mapped_mem[(region as usize,addr)],
         }
     }
@@ -465,7 +495,15 @@ impl Bus {
                             // current bit 1, incoming bit 1 -> result = 0
                             // current bit 1, incoming bit 0 -> result = 1
                             // current bit 0, incoming bit 1 -> result = 1
-                            self.mapped_mem[(region as usize,addr)] ^= val;
+                            /* self.mapped_mem[(region as usize,addr)] ^= val;
+                            self.mapped_mem[region as usize][0x202] &= !0b10000000;
+                            self.mapped_mem[region as usize][0x203] &= !0b00100000;
+                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+                            */
+                            //let old = self.mapped_mem[region as usize][addr];
+                            
+                            // only allow turning off interrupts through CPU
+                            self.mapped_mem[(region as usize,addr)] = (self.mapped_mem[(region as usize,addr)] ^ val) & self.mapped_mem[(region as usize,addr)];
                             self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
                             return;
                         }
@@ -875,13 +913,20 @@ impl Bus {
                 }
                 ((addr & 0x3ff), MemoryRegion::Oam)
             }
-            8 | 9 => {
+            8 | 9 | 10 | 11 => {
                 if !is_read {
                     return (0, MemoryRegion::Illegal);
                 }
                 //(addr, MemoryRegion::Cartridge)
                 ((addr & 0x1ffffff), MemoryRegion::Cartridge)
-            }
+            },
+            12 | 13 => {
+                if !is_read {
+                    return (0, MemoryRegion::Illegal);
+                }
+                //(addr, MemoryRegion::Cartridge)
+                ((addr & 0x1ffffff), MemoryRegion::CartridgeUpper)
+            },
             14 | 15 => {
                 /*match self.cartridge_type{
                     CartridgeType::FLASH64 | CartridgeType::FLASH128 => {
