@@ -1,15 +1,18 @@
 # gba_rust
 
-## Pre-requisites:
-This emulator requires a copy of the GBA bios. It shouldn't be hard to find online, but for legal reasons it can't be included in this repo. Create an environment variable named `GBA_RUST_BIOS_PATH` with the path to the bios file. 
+## Web demo
+https://zhiz-m.github.io/gba_rust/
 
-## How to run:
+## Pre-requisites:
+This emulator requires a copy of the GBA bios. It shouldn't be hard to find online, but for legal reasons it can't be included in this repo. For the native desktop version, create an environment variable named `GBA_RUST_BIOS_PATH` with the path to the bios file. For the web version, there will be an button to upload the bios file.  
+
+## How to run natively on your desktop:
 
 `$ cargo run --release -- --help`
 
 Eg, to run a game on my local setup:
 
-`cargo run --release -- -b 0 -o ..\..\Games\GBA\Pokemon_emerald.gba`
+`cargo run --release -- -o ..\..\Games\GBA\Pokemon_emerald.gba`
 
 ## Screenshots
 ![plot](./img/img1.png)
