@@ -1,12 +1,14 @@
 # gba_rust
 
-## Web demo
+## Web demo (preferred way of using this emulator)
 https://zhiz-m.github.io/gba_rust/
 
 ## Pre-requisites:
 This emulator requires a copy of the GBA bios. It shouldn't be hard to find online, but for legal reasons it can't be included in this repo. For the native desktop version, create an environment variable named `GBA_RUST_BIOS_PATH` with the path to the bios file. For the web version, there will be an button to upload the bios file.  
 
 ## How to run natively on your desktop:
+
+The desktop version has the advantage of running closer to your hardware, and hence runs at a 2-3x higher uncapped FPS over the web version (though both versions can play everything I've tested comfortably at the GBA's native 60FPS)
 
 `$ cargo run --release -- --help`
 
@@ -42,4 +44,4 @@ Eg, to run a game on my local setup:
 
 ## Notes
 
-The code quality could be improved, but the emulation is fully functional and great effort has been made to optimize performance- hold down your spacebar to run the emulator at an uncapped framerate. Also, there is a WIP WebAssembly frontend in this repo which is not intended for general use just yet. 
+The code quality could be improved, but the emulation is fully functional and great effort has been made to optimize performance- hold down your spacebar to run the emulator at an uncapped framerate. 
