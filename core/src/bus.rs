@@ -1,12 +1,13 @@
 use std::ops::{Index, IndexMut};
 
 use log::{info, warn};
+use serde::{Serialize, Deserialize};
 
 use crate::{algorithm, apu::Apu, config, cpu::Cpu, dma_channel::DMA_Channel, timer::Timer};
 
 //const MEM_MAX: usize = 268435456;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChunkSize {
     Word = 4,
     Halfword = 2,
@@ -28,7 +29,7 @@ pub enum MemoryRegion {
     CartridgeUpper = 10,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CartridgeType {
     Eeprom512,
     Eeprom8192,
@@ -74,6 +75,7 @@ vec![0; 0x4000],
 const MEM_REGION_OFFSET: [usize; 10] = [0x0, 0x4000, 0x44000, 0x4c000, 0x4c400, 0x4c800, 0x64800, 0x64c00, 0x2064c00, 0x2084c00];
 const MEM_REGION_TOTAL: usize = 0x2084c00;
 
+#[derive(Serialize, Deserialize)]
 struct FlatMemory{
     mem: Vec<u8>
 }
@@ -116,6 +118,7 @@ impl FlatMemory{
 
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Bus {
     mapped_mem: FlatMemory,
 

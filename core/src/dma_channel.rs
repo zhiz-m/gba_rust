@@ -1,8 +1,10 @@
 #![allow(non_camel_case_types)]
 
+use serde::{Deserialize, Serialize};
+
 use crate::bus::{Bus, ChunkSize, MemoryRegion, CartridgeType};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TimingMode {
     Immediate,
     VBlank,
@@ -10,7 +12,7 @@ pub enum TimingMode {
     FIFO,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DMA_Channel {
     channel_no: usize,
     pub src_addr: usize,

@@ -1,11 +1,15 @@
+use std::ops::{Deref, DerefMut};
+
 use crate::{
     bus::{Bus, MemoryRegion},
     config,
 };
 use log::{info, warn};
 use rubato::{FftFixedInOut, Resampler};
+use serde::{Serialize, Deserialize};
 
 // StereoTuple.0 is right, StereoTuple.1 is left
+#[derive(Serialize, Deserialize)]
 struct StereoTuple(Option<i16>, Option<i16>);
 impl StereoTuple {
     pub fn new() -> StereoTuple {
@@ -60,7 +64,7 @@ impl StereoTuple {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct FifoQueue {
     mem: Vec<i8>,
     write_ind: usize,
@@ -132,6 +136,62 @@ impl<'a> SoundBufferIt<'a>{
         self.data.iter().map(|x|x.len()).sum()
     }
 }
+
+pub struct SamplerWrapper(usize, FftFixedInOut<f32>);
+
+impl SamplerWrapper{
+    fn new(sample_rate_output: usize) -> SamplerWrapper{
+        let sampler = FftFixedInOut::new(
+            config::AUDIO_SAMPLE_RATE as usize,
+            sample_rate_output,
+            config::AUDIO_SAMPLE_CHUNKS,
+            2,
+        )
+        .unwrap();
+
+        SamplerWrapper(sample_rate_output, sampler)
+    }
+}
+
+impl Deref for SamplerWrapper{
+    type Target = FftFixedInOut<f32>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.1
+    }
+
+}
+
+impl DerefMut for SamplerWrapper{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.1
+    }
+}
+
+mod sampler_as_u64 {
+    use serde::{Serializer, Deserializer, Deserialize};
+
+    use super::SamplerWrapper;
+
+    pub fn serialize<S>(value: &SamplerWrapper, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Serialize the string as is
+        serializer.serialize_u64(value.0 as u64)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SamplerWrapper, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize the string and parse it into an integer
+        let sample_rate_output: u64 = u64::deserialize(deserializer)?;
+        Ok(SamplerWrapper::new(sample_rate_output as usize))
+    }
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct Apu {
     //  ------- square sound channels
     square_length: [u32; 2],
@@ -159,7 +219,9 @@ pub struct Apu {
     sound_in_buff: Vec<Vec<f32>>,
     sound_out_buff: Vec<Vec<Vec<f32>>>,
     sound_out_buff_index: usize,
-    sampler: FftFixedInOut<f32>,
+    #[serde(with = "sampler_as_u64")]
+    sampler: SamplerWrapper,
+    sample_rate_output: usize,
 
     pub extern_audio_enabled: bool,
 }
@@ -211,7 +273,8 @@ impl Apu {
             sound_in_buff: sampler.input_buffer_allocate(),
             sound_out_buff: vec![sampler.output_buffer_allocate(); sound_out_buff_extern_size],
             sound_out_buff_index: 0,
-            sampler,
+            sampler: SamplerWrapper::new(sample_rate_output),
+            sample_rate_output,
 
             extern_audio_enabled: true,
         }

@@ -2,15 +2,17 @@
 #![allow(non_snake_case)]
 
 use log::warn;
+use serde::{Serialize, Deserialize};
 
 use crate::{
     bus::{Bus, MemoryRegion},
     config,
     dma_channel::DMA_Channel,
+    util::BigArray,
 };
 use std::{cmp::min, collections::{HashMap, VecDeque}, num::Wrapping};
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 enum Register {
     R0,
     R1,
@@ -51,7 +53,7 @@ enum Register {
     SPSR_und,
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
 enum OperatingMode {
     Usr = 0,
     Fiq = 1,
@@ -62,7 +64,7 @@ enum OperatingMode {
     Und = 6,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
 pub enum Flag {
     N = 31,
     Z = 30,
@@ -73,8 +75,10 @@ pub enum Flag {
     T = 5,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Cpu {
     //arm_instr_table: Vec<fn(&mut Cpu, &mut Bus) -> u32>,
+    #[serde(with = "BigArray")]
     reg: [u32; 37],
     pub instr: u32,
     shifter_carry: u32, // 0 or 1 only

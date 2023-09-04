@@ -1,5 +1,8 @@
+use serde::{Serialize, Deserialize};
+
 use crate::{bus::Bus, config};
 
+#[derive(Serialize, Deserialize)]
 pub struct Timer {
     timer_no: usize,
     pub timer_count: u16,
