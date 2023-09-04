@@ -1,12 +1,16 @@
 #![allow(non_camel_case_types)]
 
 use log::warn;
+use serde::{Serialize, Deserialize};
 
-use crate::bus::{Bus, MemoryRegion};
+use crate::{
+    bus::{Bus, MemoryRegion},
+    util::BigArray
+};
 
-use std::num::Wrapping;
+use std::{num::Wrapping, ops::{Deref, DerefMut}};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Pixel(u8, u8, u8);
 
 impl Pixel {
@@ -35,9 +39,35 @@ impl Pixel {
     }
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
+struct Scanline{
+    #[serde(with = "BigArray")]
+    scanline: [Pixel; 240],
+}
+
+impl Default for Scanline{
+    fn default() -> Self {
+        Self { scanline: [Default::default(); 240] }
+    }
+}
+
+impl Deref for Scanline{
+    type Target = [Pixel; 240];
+
+    fn deref(&self) -> &Self::Target {
+        &self.scanline
+    }
+}
+
+impl DerefMut for Scanline{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.scanline
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ScreenBuffer {
-    buffer: Box<[[Pixel; 240]; 160]>,
+    buffer: Vec<Scanline>,
 }
 
 impl Default for ScreenBuffer {
@@ -49,7 +79,7 @@ impl Default for ScreenBuffer {
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
         ScreenBuffer {
-            buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
+            buffer: vec![Default::default(); 160],
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
