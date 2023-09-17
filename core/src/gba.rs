@@ -12,10 +12,11 @@ use crate::{
 #[derive(Clone, Copy)]
 enum Workflow {
     Timer = 0,
-    Cpu = 1,
-    Apu = 2,
-    Ppu = 3,
-    Normaliser = 4,
+    Arm9 = 1,
+    Arm7 = 2,
+    Apu = 3,
+    Ppu = 4,
+    Normaliser = 5,
 }
 
 pub struct GBA {
@@ -28,7 +29,7 @@ pub struct GBA {
     save_state_updated: bool,
 
     //heap: BinaryHeap<Reverse<(u32, Workflow)>>,
-    workflow_times: [(u32, Workflow); 5],
+    workflow_times: [(u32, Workflow); 6],
     //time_until_non_cpu_execution: u32,
     last_finished_time: u64,  // microseconds, continuous time
     last_fps_print_time: u64, // microseconds
@@ -71,7 +72,8 @@ impl GBA {
 
             workflow_times: [
                 (0, Workflow::Timer),
-                (0, Workflow::Cpu),
+                (0, Workflow::Arm9),
+                (0, Workflow::Arm7),
                 (0, Workflow::Apu),
                 (0, Workflow::Ppu),
                 (0, Workflow::Normaliser),
@@ -159,15 +161,18 @@ impl GBA {
                     self.bus.timer_clock();
                     self.workflow_times[0].0 += config::TIMER_CLOCK_INTERVAL_CLOCKS;
                 }
-                Workflow::Cpu => {
-                    self.workflow_times[1].0 += self.bus.cpu_clock();
+                Workflow::Arm9 => {
+                    self.workflow_times[1].0 += self.bus.arm9_clock();
+                }
+                Workflow::Arm7 => {
+                    self.workflow_times[2].0 += self.bus.arm7_clock();
                 }
                 Workflow::Apu => {
                     self.bus.apu_clock();
-                    self.workflow_times[2].0 += config::AUDIO_SAMPLE_CLOCKS;
+                    self.workflow_times[3].0 += config::AUDIO_SAMPLE_CLOCKS;
                 }
                 Workflow::Ppu => {
-                    self.workflow_times[3].0 += self.ppu.clock(&mut self.bus);
+                    self.workflow_times[4].0 += self.ppu.clock(&mut self.bus);
                     if self.ppu.buffer_ready {
                         self.on_new_buffer(current_time);
 
@@ -204,12 +209,12 @@ impl GBA {
                     }
 
                     // roughly every second in real-time, we want to normalize all the values in the array
-                    if self.workflow_times[4].0 >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60 {
-                        let min = self.workflow_times[4].0;
+                    if self.workflow_times[5].0 >= config::CPU_EXECUTION_INTERVAL_CLOCKS * 60 {
+                        let min = self.workflow_times[5].0;
                         self.workflow_times.iter_mut().for_each(|x| x.0 -= min);
-                        self.workflow_times[4].0 = config::CPU_EXECUTION_INTERVAL_CLOCKS;
+                        self.workflow_times[5].0 = config::CPU_EXECUTION_INTERVAL_CLOCKS;
                     } else {
-                        self.workflow_times[4].0 += config::CPU_EXECUTION_INTERVAL_CLOCKS;
+                        self.workflow_times[5].0 += config::CPU_EXECUTION_INTERVAL_CLOCKS;
                     }
                 }
             }

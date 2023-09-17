@@ -11,7 +11,7 @@ pub enum TimingMode {
 }
 
 #[derive(Clone)]
-pub struct DMA_Channel {
+pub struct DMA_Channel<const IS_ARM9: bool> {
     channel_no: usize,
     pub src_addr: usize,
     pub dest_addr: usize,
@@ -26,8 +26,8 @@ pub struct DMA_Channel {
     pub is_enabled: bool,
 }
 
-impl DMA_Channel {
-    pub fn new_disabled(channel_no: usize) -> DMA_Channel {
+impl<const IS_ARM9: bool> DMA_Channel<IS_ARM9> {
+    pub fn new_disabled(channel_no: usize) -> DMA_Channel<IS_ARM9> {
         DMA_Channel {
             channel_no,
             src_addr: 0,
@@ -44,24 +44,26 @@ impl DMA_Channel {
         }
     }
 
-    pub fn new_enabled(channel_no: usize, bus: &mut Bus) -> DMA_Channel {
-        let src_addr = bus.read_word_raw(0xb0 + 12 * channel_no, MemoryRegion::IO) as usize;
-        let dest_addr = bus.read_word_raw(0xb4 + 12 * channel_no, MemoryRegion::IO) as usize;
-        let dma_cnt = bus.read_word_raw(0xb8 + 12 * channel_no, MemoryRegion::IO);
+    pub fn new_enabled(channel_no: usize, bus: &mut Bus) -> DMA_Channel<IS_ARM9> {
+        let src_addr = bus.read_word_raw(0xb0 + 12 * channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io}) as usize;
+        let dest_addr = bus.read_word_raw(0xb4 + 12 * channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io}) as usize;
+        let dma_cnt = bus.read_word_raw(0xb8 + 12 * channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io});
         let mut num_transfers = dma_cnt as u16;
-        let timing_mode = match (dma_cnt >> 0x1c) & 0b11 {
+        let timing_bits = if IS_ARM9 {dma_cnt >> 0x1b} else {dma_cnt >> 0x1c} & 0b11;
+        let mut is_enabled = true;
+        let timing_mode = match timing_bits {
             0b00 => TimingMode::Immediate,
             0b01 => TimingMode::VBlank,
             0b10 => TimingMode::HBlank,
             0b11 => {
-                // turn dma channel off
-                //is_enabled = false;
+                // turn dma channel off, fifo not applicable to nds
+                is_enabled = false;
                 //let mut dma_cnt_upper = bus.read_byte_raw(0x040000bb + 12 * channel_no);
                 //dma_cnt_upper &= !(1 << 7);
                 //bus.store_byte_raw(0x040000bb + 12 * channel_no, dma_cnt_upper);
-                assert!(dest_addr == 0x040000a0 || dest_addr == 0x040000a4);
+                // assert!(dest_addr == 0x040000a0 || dest_addr == 0x040000a4);
                 //println!("dma fifo addr: {:#x}", src_addr)
-                num_transfers = 4;
+                // num_transfers = 4;
                 TimingMode::FIFO
             }
             _ => unreachable!(),
@@ -85,7 +87,7 @@ impl DMA_Channel {
             is_repeating: false,
 
             repeat_reset_dest: false,
-            is_enabled: true,
+            is_enabled,
         }
     }
 
@@ -116,7 +118,7 @@ impl DMA_Channel {
                             // video transfer mode
                             3 => {
                                 bus.hblank_dma && {
-                                    let vcount = bus.read_byte_raw(0x5, MemoryRegion::IO);
+                                    let vcount = bus.read_byte_raw(0x5, MemoryRegion::Arm7Io);
                                     vcount >= 2 && vcount < 162
                                 }
                             }
@@ -136,7 +138,7 @@ impl DMA_Channel {
         //if !self.check_is_active(bus){
         //    return 0;
         //}
-        let dma_cnt = bus.read_word_raw(0xb8 + 12 * self.channel_no, MemoryRegion::IO);
+        let dma_cnt = bus.read_word_raw(0xb8 + 12 * self.channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io});
 
         if self.is_repeating {
             // if this is a repeat run, need to re-load the number of transfers
@@ -146,7 +148,7 @@ impl DMA_Channel {
             };
             if self.repeat_reset_dest {
                 self.dest_addr =
-                    bus.read_word_raw(0xb4 + 12 * self.channel_no, MemoryRegion::IO) as usize;
+                    bus.read_word_raw(0xb4 + 12 * self.channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io}) as usize;
             }
         }
 
@@ -205,6 +207,12 @@ impl DMA_Channel {
         if self.channel_no == 3{
             //println!("dma channel 3, src addr: {:#x}, dest addr: {:#x}", self.src_addr, self.dest_addr);
         }
+
+        // if num_transfers is 0, set to max size
+        if self.num_transfers == 0 {
+            self.num_transfers = if IS_ARM9{0x200000} else if self.channel_no == 3 {0x10000} else {0x4000}
+        }
+
         //
         if self.channel_no == 3 && ((self.src_addr >= 0xd000000 && self.src_addr <= 0xdffffff ) || (self.dest_addr >= 0xd000000 && self.dest_addr <= 0xdffffff )) 
             && (bus.cartridge_type == CartridgeType::Eeprom512 || bus.cartridge_type == CartridgeType::Eeprom8192){
@@ -356,12 +364,12 @@ impl DMA_Channel {
         if !self.is_repeating {
             self.is_enabled = false;
             let mut dma_cnt_upper =
-                bus.read_byte_raw(0xbb + 12 * self.channel_no, MemoryRegion::IO);
+                bus.read_byte_raw(0xbb + 12 * self.channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io});
             dma_cnt_upper &= !(1 << 7);
-            bus.store_byte_raw(0xbb + 12 * self.channel_no, MemoryRegion::IO, dma_cnt_upper);
+            bus.store_byte_raw(0xbb + 12 * self.channel_no, if IS_ARM9 {MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io}, dma_cnt_upper);
         }
         if self.raise_interrupt {
-            bus.cpu_interrupt(1 << (8 + self.channel_no));
+            bus.cpu_interrupt::<IS_ARM9>(1 << (8 + self.channel_no));
         }
 
         (self.num_transfers as u32 - 1) * 2 + 4

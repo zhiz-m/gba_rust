@@ -1,6 +1,6 @@
 use crate::{bus::Bus, config};
 
-pub struct Timer {
+pub struct Timer<const IS_ARM9: bool> {
     timer_no: usize,
     pub timer_count: u16,
     cur_cycle: u16,
@@ -13,8 +13,8 @@ pub struct Timer {
     //direct_sound_channel: Option<usize>,
 }
 
-impl Timer {
-    pub fn new(timer_no: usize) -> Timer {
+impl<const IS_ARM9: bool> Timer<IS_ARM9> {
+    pub fn new(timer_no: usize) -> Self {
         Timer {
             timer_no,
             timer_count: 0,
@@ -96,7 +96,7 @@ impl Timer {
                 }*/
                 self.timer_count += self.reload_val;
                 if self.raise_interrupt {
-                    bus.cpu_interrupt(1 << (3 + self.timer_no));
+                    bus.cpu_interrupt::<IS_ARM9>(1 << (3 + self.timer_no));
                 }
                 true
             } else {

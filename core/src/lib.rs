@@ -9,6 +9,9 @@ mod input_handler;
 mod ppu;
 mod timer;
 mod util;
+mod cp15;
+mod spi;
+
 pub use apu::SoundBufferIt;
 pub use config::NUM_SAVE_STATES;
 pub use config::SAVE_STATE_SIZE;

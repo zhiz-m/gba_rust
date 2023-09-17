@@ -37,7 +37,7 @@ impl Pixel {
 
 #[derive(Clone)]
 pub struct ScreenBuffer {
-    buffer: Box<[[Pixel; 240]; 160]>,
+    buffer: Box<[[Pixel; 256]; 192]>,
 }
 
 impl Default for ScreenBuffer {
@@ -49,7 +49,7 @@ impl Default for ScreenBuffer {
 impl ScreenBuffer {
     pub fn new() -> ScreenBuffer {
         ScreenBuffer {
-            buffer: Box::new([[Pixel::new(0, 0, 0); 240]; 160]),
+            buffer: Box::new([[Pixel::new(0, 0, 0); 256]; 192]),
         }
     }
     pub fn write_pixel(&mut self, row: usize, col: usize, pixel: Pixel) {
@@ -102,7 +102,7 @@ pub struct Ppu {
     disp_cnt: u16,
     disp_stat: u16,
 
-    cpu_interrupt: u16,
+    cpu_interrupt: u32,
 
     frame_count: u32,
     pub frame_count_render: u32,
@@ -117,11 +117,11 @@ impl Ppu {
 
             is_hblank: false,
             cur_line: 0,
-            cur_scanline: vec![Pixel::new(0, 0, 0); 240],
-            cur_scanline_front: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
-            cur_scanline_back: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+            cur_scanline: vec![Pixel::new(0, 0, 0); 256],
+            cur_scanline_front: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 256],
+            cur_scanline_back: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 256],
 
-            window_scanlines: std::array::from_fn(|_|vec![true; 240]),
+            window_scanlines: std::array::from_fn(|_|vec![true; 256]),
             active_windows: [false; 4],
             window_flags: [0; 4],
             is_windowing_active: false,
@@ -156,19 +156,21 @@ impl Ppu {
         self.disp_cnt = bus.read_halfword_raw(0x0, MemoryRegion::IO);
         self.disp_stat = bus.read_halfword_raw(0x4, MemoryRegion::IO);
 
-        let res = if self.cur_line >= 160 {
+        let res = if self.cur_line >= 192 {
             self.cur_line += 1;
-            if self.cur_line == 228 {
+            if self.cur_line == /*228*/ 263 {
                 self.is_hblank = false;
                 self.cur_line = 0;
-                960
+                256*3
+                // 960
             } else {
-                1232
+                (256+99) * 3
+                // 1232
             }
         } else if !self.is_hblank {
             if self.frame_count == 0 {
                 self.process_scanline(bus);
-                for j in 0..240 {
+                for j in 0..256 {
                     self.buffer
                         .write_pixel(self.cur_line as usize, j, self.cur_scanline[j]);
                 }
@@ -182,13 +184,14 @@ impl Ppu {
                 self.cpu_interrupt |= 0b10;
             }
             bus.hblank_dma = true;
-
-            272
+            
+            99 * 3
+            // 272
         } else {
             self.is_hblank = false;
             self.cur_line += 1;
 
-            if self.cur_line == 160 {
+            if self.cur_line == 192 {
                 if self.frame_count == 0 {
                     self.buffer_ready = true;
                 }
@@ -196,18 +199,20 @@ impl Ppu {
                 if self.frame_count >= self.frame_count_render {
                     self.frame_count = 0;
                 }
-                1232
+                (256+99) * 3
+                // 1232
             } else {
-                960
+                256*3
+                // 960
             }
         };
         // store VCOUNT
         bus.store_byte_raw(0x6, MemoryRegion::IO, self.cur_line);
 
         self.disp_stat &= !0b111;
-        if self.cur_line >= 160 {
+        if self.cur_line >= 192 {
             // set vblank interrupt
-            if self.cur_line == 160 {
+            if self.cur_line == 192 {
                 if (self.disp_stat >> 3) & 1 > 0 {
                     self.cpu_interrupt |= 1;
                 }
@@ -218,8 +223,11 @@ impl Ppu {
         if self.is_hblank {
             self.disp_stat |= 0b010;
         }
+
+        let vcount_setting = (self.disp_stat >> 8) + (((self.disp_stat >> 7) & 1) << 8);
+
         // vcount interrupt request
-        if !self.is_hblank && self.cur_line as u16 == (self.disp_stat >> 8) {
+        if !self.is_hblank && self.cur_line as u16 == vcount_setting {
             if (self.disp_stat >> 5) & 1 > 0 {
                 self.cpu_interrupt |= 0b100;
                 //info!("vcount irq requested: {}, frame: {}", self.disp_stat >> 8, self.frame_count);

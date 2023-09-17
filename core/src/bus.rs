@@ -2,7 +2,9 @@ use std::ops::{Index, IndexMut};
 
 use log::{info, warn};
 
-use crate::{algorithm, apu::Apu, config, cpu::Cpu, dma_channel::DMA_Channel, timer::Timer};
+use crate::{
+    algorithm, apu::Apu, config, cp15::Cp15, cpu::Cpu, dma_channel::DMA_Channel, timer::Timer,
+};
 
 //const MEM_MAX: usize = 268435456;
 
@@ -13,20 +15,55 @@ pub enum ChunkSize {
     Byte = 1,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum MemoryRegion {
-    Bios = 0,
-    BoardWram = 1,
-    ChipWram = 2,
-    IO = 3,
+    Arm7Bios = 0,
+    MainMemory = 1,
+    SharedWram = 2,
+    Arm7Io = 3,
     Palette = 4,
-    Vram = 5,
-    Oam = 6,
-    Cartridge = 7,
-    CartridgeSram = 8,
-    Illegal = 9,
-    CartridgeUpper = 10,
+    VramBgA = 5,
+    VramBgB = 6,
+    VramObjA = 7,
+    VramObjB = 8,
+    VramLcdc = 9,
+    Oam = 10,
+    Cartridge = 11,
+    CartridgeSram = 12,
+    ITcm = 13,
+    DTcm = 14,
+    Arm9Bios = 15,
+    Arm9Io = 16, // note: when there is shared IO, arm7 is chosen
+    Arm7Wram = 17,
+    Arm7WirelessWaitstates = 18,
+    Illegal = 19,
+    CartridgeUpper = 20,
+    // todo: arm7 wifi registers
 }
+
+const MEM_REGION_COUNT: usize = 19;
+
+const MEM_REGION_SIZES: [usize; MEM_REGION_COUNT] = [
+    0x4000,    // Arm7Bios
+    0x400000,  // MainMemory
+    0x8000,    // SharedWram
+    0x800,     // Arm7IO
+    0x800,     // Palette
+    0x80000,   // VramBgA
+    0x20000,   // VramBgB
+    0x40000,   // VramObjA
+    0x20000,   // VramObjB
+    0xA4000,   // VramLcdc
+    0x800,     // OAM
+    0x2000000, // Cartridge (size is not fixed)
+    0x20000,   // cartridge sram (maybe remove later, might not be used)
+    0x8000,    // ITcm
+    0x4000,    // DTcm
+    0x8000,    // Arm9Bios
+    0x800,     // Arm9IO
+    0x100,     // Arm7WirelessWaitstates: TODO
+    0x10000,   // Arm7Wram
+];
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum CartridgeType {
@@ -70,51 +107,56 @@ vec![0; 0x4000],
             vec![0; 0x20000],
 */
 
-// const MEM_REGION_SIZES: [usize; 9] = [0x4000, 0x40000, 0x8000, 0x400, 0x400, 0x18000, 0x400, 0x2000000, 0x20000];
-const MEM_REGION_OFFSET: [usize; 10] = [0x0, 0x4000, 0x44000, 0x4c000, 0x4c400, 0x4c800, 0x64800, 0x64c00, 0x2064c00, 0x2084c00];
-const MEM_REGION_TOTAL: usize = 0x2084c00;
+// const MEM_REGION_OFFSET: [usize; 10] = [0x0, 0x4000, 0x44000, 0x4c000, 0x4c400, 0x4c800, 0x64800, 0x64c00, 0x2064c00, 0x2084c00];
+// const MEM_REGION_TOTAL: usize = 0x2084c00;
 
-struct FlatMemory{
-    mem: Vec<u8>
+struct FlatMemory {
+    mem: Vec<u8>,
+    mem_region_offset: [usize; MEM_REGION_COUNT + 1],
 }
 
-impl Default for FlatMemory{
+impl Default for FlatMemory {
     fn default() -> Self {
-        Self { mem: vec![0; MEM_REGION_TOTAL] }
+        let mut mem_region_offset = [0; MEM_REGION_COUNT + 1];
+        for (i, num) in MEM_REGION_SIZES.iter().enumerate() {
+            mem_region_offset[i + 1] += *num;
+        }
+        Self {
+            mem: vec![0; mem_region_offset[MEM_REGION_COUNT]],
+            mem_region_offset,
+        }
     }
 }
 
-impl Index<usize> for FlatMemory{
+impl Index<usize> for FlatMemory {
     type Output = [u8];
 
     fn index(&self, index: usize) -> &Self::Output {
-        &self.mem[MEM_REGION_OFFSET[index]..MEM_REGION_OFFSET[index+1]]
+        &self.mem[self.mem_region_offset[index]..self.mem_region_offset[index + 1]]
     }
 }
 
-impl IndexMut<usize> for FlatMemory{
+impl IndexMut<usize> for FlatMemory {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        &mut self.mem[MEM_REGION_OFFSET[index]..MEM_REGION_OFFSET[index+1]]
+        &mut self.mem[self.mem_region_offset[index]..self.mem_region_offset[index + 1]]
     }
 }
 
-impl Index<(usize, usize)> for FlatMemory{
+impl Index<(usize, usize)> for FlatMemory {
     type Output = u8;
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
-        &self.mem[MEM_REGION_OFFSET[index.0] + index.1]
+        &self.mem[self.mem_region_offset[index.0] + index.1]
     }
 }
 
-impl IndexMut<(usize, usize)> for FlatMemory{
+impl IndexMut<(usize, usize)> for FlatMemory {
     fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
-        &mut self.mem[MEM_REGION_OFFSET[index.0] + index.1]
+        &mut self.mem[self.mem_region_offset[index.0] + index.1]
     }
 }
 
-impl FlatMemory{
-
-}
+impl FlatMemory {}
 
 pub struct Bus {
     mapped_mem: FlatMemory,
@@ -134,15 +176,29 @@ pub struct Bus {
     pub eeprom_read_offset: usize,
     pub eeprom_write_successful: bool,
 
-    pub is_any_dma_active: bool,
+    pub is_any_arm9_dma_active: bool,
+    pub is_any_arm7_dma_active: bool,
     pub hblank_dma: bool,
     pub vblank_dma: bool,
-    pub dma_channels: [DMA_Channel; 4],
+    pub dma_channels_arm9: [DMA_Channel<true>; 4],
+    pub dma_channels_arm7: [DMA_Channel<false>; 4],
 
     pub is_any_timer_active: bool,
-    timers: [Timer; 4],
+    arm9_timers: [Timer<true>; 4],
+    arm7_timers: [Timer<false>; 4],
 
-    pub cpu: Cpu,
+    pub arm9: Cpu<true>,
+    pub arm7: Cpu<false>,
+    // pub arm7: Cpu<false>,
+    pub cp15: Cp15,
+
+    pub dtcm_load_mode: bool,
+    pub itcm_load_mode: bool,
+    pub dtcm_addr: usize,
+    pub dtcm_size: usize,
+
+    pub tcm_readable: bool,
+
     pub apu: Apu,
 }
 
@@ -178,7 +234,8 @@ impl Bus {
         // load ROM
         let mut reader = BufReader::new(File::open(rom_path).unwrap());
         reader.read(&mut mapped_mem[MemoryRegion::Cartridge as usize][..]).unwrap();*/
-        mapped_mem[MemoryRegion::Bios as usize][..].copy_from_slice(bios_bin);
+        mapped_mem[MemoryRegion::Arm7Bios as usize][..].copy_from_slice(bios_bin);
+        // TODO: load arm9 bios
         mapped_mem[MemoryRegion::Cartridge as usize][..rom_bin.len()].copy_from_slice(rom_bin);
 
         let cartridge_type = match cartridge_type_str {
@@ -214,10 +271,17 @@ impl Bus {
             eeprom_read_offset: 0,
             eeprom_write_successful: false,
 
-            is_any_dma_active: false,
+            is_any_arm9_dma_active: false,
+            is_any_arm7_dma_active: false,
             hblank_dma: false,
             vblank_dma: false,
-            dma_channels: [
+            dma_channels_arm9: [
+                DMA_Channel::new_disabled(0),
+                DMA_Channel::new_disabled(1),
+                DMA_Channel::new_disabled(2),
+                DMA_Channel::new_disabled(3),
+            ],
+            dma_channels_arm7: [
                 DMA_Channel::new_disabled(0),
                 DMA_Channel::new_disabled(1),
                 DMA_Channel::new_disabled(2),
@@ -225,9 +289,20 @@ impl Bus {
             ],
 
             is_any_timer_active: false,
-            timers: [Timer::new(0), Timer::new(1), Timer::new(2), Timer::new(3)],
+            arm9_timers: [Timer::new(0), Timer::new(1), Timer::new(2), Timer::new(3)],
+            arm7_timers: [Timer::new(0), Timer::new(1), Timer::new(2), Timer::new(3)],
 
-            cpu: Cpu::new(),
+            arm9: Cpu::<true>::new(),
+            arm7: Cpu::<false>::new(),
+            cp15: Default::default(),
+
+            dtcm_load_mode: false,
+            itcm_load_mode: false,
+            dtcm_addr: 0,
+            dtcm_size: 0,
+
+            tcm_readable: true,
+
             apu,
         }
     }
@@ -287,53 +362,81 @@ impl Bus {
 
     #[inline(always)]
     pub fn read_byte_raw(&self, addr: usize, region: MemoryRegion) -> u8 {
-        self.mapped_mem[(region as usize,addr)]
+        self.mapped_mem[(region as usize, addr)]
     }
 
     #[inline(always)]
     pub fn read_halfword_raw(&self, addr: usize, region: MemoryRegion) -> u16 {
-        self.mapped_mem[(region as usize,addr)] as u16
-            + ((self.mapped_mem[(region as usize,addr + 1)] as u16) << 8)
+        self.mapped_mem[(region as usize, addr)] as u16
+            + ((self.mapped_mem[(region as usize, addr + 1)] as u16) << 8)
     }
 
     #[inline(always)]
     pub fn read_word_raw(&self, addr: usize, region: MemoryRegion) -> u32 {
-        self.mapped_mem[(region as usize,addr)] as u32
-            + ((self.mapped_mem[(region as usize,addr + 1)] as u32) << 8)
-            + ((self.mapped_mem[(region as usize,addr + 2)] as u32) << 16)
-            + ((self.mapped_mem[(region as usize,addr + 3)] as u32) << 24)
+        self.mapped_mem[(region as usize, addr)] as u32
+            + ((self.mapped_mem[(region as usize, addr + 1)] as u32) << 8)
+            + ((self.mapped_mem[(region as usize, addr + 2)] as u32) << 16)
+            + ((self.mapped_mem[(region as usize, addr + 3)] as u32) << 24)
     }
 
     #[inline(always)]
     pub fn store_byte_raw(&mut self, addr: usize, region: MemoryRegion, val: u8) {
-        self.mapped_mem[(region as usize,addr)] = val;
+        self.mapped_mem[(region as usize, addr)] = val;
     }
 
     #[inline(always)]
     pub fn store_halfword_raw(&mut self, addr: usize, region: MemoryRegion, val: u16) {
-        self.mapped_mem[(region as usize,addr)] = (val & 0b11111111) as u8;
-        self.mapped_mem[(region as usize,addr + 1)] = ((val >> 8) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
     }
 
     #[inline(always)]
     pub fn store_word_raw(&mut self, addr: usize, region: MemoryRegion, val: u32) {
-        self.mapped_mem[(region as usize,addr)] = (val & 0b11111111) as u8;
-        self.mapped_mem[(region as usize,addr + 1)] = ((val >> 8) & 0b11111111) as u8;
-        self.mapped_mem[(region as usize,addr + 2)] = ((val >> 16) & 0b11111111) as u8;
-        self.mapped_mem[(region as usize,addr + 3)] = ((val >> 24) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr + 2)] = ((val >> 16) & 0b11111111) as u8;
+        self.mapped_mem[(region as usize, addr + 3)] = ((val >> 24) & 0b11111111) as u8;
     }
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
     #[inline(always)]
-    pub fn cpu_interrupt(&mut self, interrupt: u16) {
-        let reg_if = self.read_halfword_raw(0x202, MemoryRegion::IO);
-        let cur_reg_if = interrupt & self.read_halfword_raw(0x200, MemoryRegion::IO);
+    pub fn cpu_interrupt<const IS_ARM9: bool>(&mut self, interrupt: u32) {
+        let region = if IS_ARM9 {
+            MemoryRegion::Arm9Io
+        } else {
+            MemoryRegion::Arm7Io
+        };
+        let reg_if = self.read_word_raw(0x214, region);
+
+        // AND with reg_ie
+        let cur_reg_if = interrupt & self.read_word_raw(0x210, region);
         // self.store_halfword(0x04000202, cur_reg_if & !(reg_if));
-        self.mapped_mem[(MemoryRegion::IO as usize,0x202)] ^= (cur_reg_if & !(reg_if)) as u8;
-        self.mapped_mem[(MemoryRegion::IO as usize,0x203)] ^= ((cur_reg_if & !(reg_if)) >> 8) as u8;
-        self.mapped_mem[(MemoryRegion::IO as usize,0x202)] &= !0b10000000;
-        self.mapped_mem[(MemoryRegion::IO as usize,0x203)] &= !0b00100000;
-        self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+        self.mapped_mem[(region as usize, 0x214)] ^= (cur_reg_if & !(reg_if)) as u8;
+        self.mapped_mem[(region as usize, 0x215)] ^= ((cur_reg_if & !(reg_if)) >> 8) as u8;
+        self.mapped_mem[(region as usize, 0x216)] ^= ((cur_reg_if & !(reg_if)) >> 16) as u8;
+        self.mapped_mem[(region as usize, 0x217)] ^= ((cur_reg_if & !(reg_if)) >> 24) as u8;
+
+        // clear some interrupts that we dont want
+        if IS_ARM9 {
+            self.mapped_mem[(region as usize, 0x214)] &= !0b10000000;
+        }
+        // clear gba-slot bit and unused bits
+        self.mapped_mem[(region as usize, 0x215)] &= !0b11100000;
+        if !IS_ARM9 {
+            // clear geometry command fifo
+            self.mapped_mem[(region as usize, 0x216)] &= !0b00100000;
+            self.mapped_mem[(region as usize, 0x217)] &= 0b00000001;
+        } else {
+            // clear 4 other geometry bits
+            self.mapped_mem[(region as usize, 0x216)] &= !0b11100000;
+            self.mapped_mem[(region as usize, 0x217)] = 0;
+        }
+
+        if IS_ARM9 {
+            self.arm9.interrupt_requested = self.arm9.check_interrupt(self);
+        } else {
+            self.arm7.interrupt_requested = self.arm7.check_interrupt(self);
+        }
     }
 
     #[inline(always)]
@@ -342,14 +445,28 @@ impl Bus {
             return;
         }
         unsafe {
+            // arm9 timers
             for i in 0..4 {
-                let ptr = &mut self.timers[i] as *mut Timer;
+                let ptr = &mut self.arm9_timers[i] as *mut Timer<true>;
                 if (*ptr).is_enabled
                     && (*ptr).clock(self)
                     && i != 3
-                    && self.timers[i + 1].is_cascading
+                    && self.arm9_timers[i + 1].is_cascading
                 {
-                    let ptr = &mut self.timers[i + 1] as *mut Timer;
+                    let ptr = &mut self.arm9_timers[i + 1] as *mut Timer<true>;
+                    (*ptr).cascade();
+                }
+            }
+
+            // arm7 timers
+            for i in 0..4 {
+                let ptr = &mut self.arm7_timers[i] as *mut Timer<false>;
+                if (*ptr).is_enabled
+                    && (*ptr).clock(self)
+                    && i != 3
+                    && self.arm7_timers[i + 1].is_cascading
+                {
+                    let ptr = &mut self.arm7_timers[i + 1] as *mut Timer<false>;
                     (*ptr).cascade();
                 }
             }
@@ -357,8 +474,14 @@ impl Bus {
     }
 
     #[inline(always)]
-    pub fn cpu_clock(&mut self) -> u32 {
-        let ptr = &mut self.cpu as *mut Cpu;
+    pub fn arm9_clock(&mut self) -> u32 {
+        let ptr = &mut self.arm9 as *mut Cpu<true>;
+        unsafe { (*ptr).clock(self) }
+    }
+
+    #[inline(always)]
+    pub fn arm7_clock(&mut self) -> u32 {
+        let ptr = &mut self.arm7 as *mut Cpu<false>;
         unsafe { (*ptr).clock(self) }
     }
 
@@ -378,21 +501,37 @@ impl Bus {
 
     // -------- helper functions
     #[inline(always)]
-    pub fn set_is_any_dma_active(&mut self) {
-        self.is_any_dma_active = false;
-        for i in 0..4 {
-            if self.dma_channels[i].is_enabled {
-                self.is_any_dma_active = true;
-                return;
+    pub fn set_is_any_dma_active<const IS_ARM9: bool>(&mut self) {
+        if IS_ARM9 {
+            self.is_any_arm9_dma_active = false;
+            for i in 0..4 {
+                if self.dma_channels_arm9[i].is_enabled {
+                    self.is_any_arm9_dma_active = true;
+                    return;
+                }
             }
-        }
+        } else {
+            self.is_any_arm7_dma_active = false;
+            for i in 0..4 {
+                if self.dma_channels_arm7[i].is_enabled {
+                    self.is_any_arm7_dma_active = true;
+                    return;
+                }
+            }
+        };
     }
 
     #[inline(always)]
     pub fn set_is_any_timer_active(&mut self) {
         self.is_any_timer_active = false;
         for i in 0..4 {
-            if self.timers[i].is_enabled {
+            if self.arm9_timers[i].is_enabled {
+                self.is_any_timer_active = true;
+                return;
+            }
+        }
+        for i in 0..4 {
+            if self.arm7_timers[i].is_enabled {
                 self.is_any_timer_active = true;
                 return;
             }
@@ -402,91 +541,102 @@ impl Bus {
     #[inline(always)]
     fn internal_read_byte(&mut self, addr: usize, region: MemoryRegion) -> u8 {
         match region {
-            MemoryRegion::IO => {
+            MemoryRegion::Arm9Io => {
                 if (0x100..=0x10e).contains(&addr) {
                     match addr {
-                        0x100 => self.timers[0].timer_count as u8,
-                        0x101 => (self.timers[0].timer_count >> 8) as u8,
-                        0x104 => self.timers[1].timer_count as u8,
-                        0x105 => (self.timers[1].timer_count >> 8) as u8,
-                        0x108 => self.timers[2].timer_count as u8,
-                        0x109 => (self.timers[2].timer_count >> 8) as u8,
-                        0x10c => self.timers[3].timer_count as u8,
-                        0x10d => (self.timers[3].timer_count >> 8) as u8,
-                        _ => self.mapped_mem[(region as usize,addr)],
+                        0x100 => self.arm9_timers[0].timer_count as u8,
+                        0x101 => (self.arm9_timers[0].timer_count >> 8) as u8,
+                        0x104 => self.arm9_timers[1].timer_count as u8,
+                        0x105 => (self.arm9_timers[1].timer_count >> 8) as u8,
+                        0x108 => self.arm9_timers[2].timer_count as u8,
+                        0x109 => (self.arm9_timers[2].timer_count >> 8) as u8,
+                        0x10c => self.arm9_timers[3].timer_count as u8,
+                        0x10d => (self.arm9_timers[3].timer_count >> 8) as u8,
+                        _ => self.mapped_mem[(region as usize, addr)],
                     }
                 } else {
-                    self.mapped_mem[(region as usize,addr)]
+                    self.mapped_mem[(region as usize, addr)]
                 }
             }
-            MemoryRegion::CartridgeSram => {
-                //info!("read from SRAM, addr: {:#x}, val: {:#x}", addr, self.mem[addr]);
-                match self.cartridge_type {
-                    CartridgeType::Sram => self.mapped_mem[(region as usize,addr)],
-                    CartridgeType::Flash64 | CartridgeType::Flash128 => {
-                        self.internal_read_byte_flash(addr)
+            MemoryRegion::Arm7Io => {
+                if (0x100..=0x10e).contains(&addr) {
+                    match addr {
+                        0x100 => self.arm7_timers[0].timer_count as u8,
+                        0x101 => (self.arm7_timers[0].timer_count >> 8) as u8,
+                        0x104 => self.arm7_timers[1].timer_count as u8,
+                        0x105 => (self.arm7_timers[1].timer_count >> 8) as u8,
+                        0x108 => self.arm7_timers[2].timer_count as u8,
+                        0x109 => (self.arm7_timers[2].timer_count >> 8) as u8,
+                        0x10c => self.arm7_timers[3].timer_count as u8,
+                        0x10d => (self.arm7_timers[3].timer_count >> 8) as u8,
+                        _ => self.mapped_mem[(region as usize, addr)],
                     }
-                    _ => {
-                        warn!(
-                            "reading from SRAM is forbidden for cartridge type {}",
-                            self.cartridge_type as u32
-                        );
-                        0
-                    }
+                } else {
+                    self.mapped_mem[(region as usize, addr)]
                 }
             }
-            MemoryRegion::Bios => {
+            MemoryRegion::Arm7Bios => {
                 let offset = (addr & 0b11) << 3;
                 //let range = 0b11111111 << (offset);
-                if self.cpu.actual_pc >= 0x4000 {
+                if self.arm7.actual_pc >= 0x4000 {
                     warn!(
-                        "attempt for CPU to read BIOS from outside, {} {:#x}",
-                        offset, self.cpu.last_fetched_bios_instr
+                        "attempt for arm7 CPU to read BIOS from outside, {} {:#x}",
+                        offset, self.arm7.last_fetched_bios_instr
                     );
-                    ((self.cpu.last_fetched_bios_instr >> offset) & 0b11111111) as u8
+                    ((self.arm7.last_fetched_bios_instr >> offset) & 0b11111111) as u8
                 } else {
                     //self.cpu.last_fetched_bios_instr &= !range;
                     //self.cpu.last_fetched_bios_instr = (self.mapped_mem[region as usize][addr] as u32) << offset;
-                    self.mapped_mem[(region as usize,addr)]
+                    self.mapped_mem[(region as usize, addr)]
                 }
             }
-            MemoryRegion::CartridgeUpper => {
-                if self.eeprom_write_successful && (addr == 0x1000000 || addr == 0x1ffff00) {
-                    self.eeprom_write_successful = false;
-                    1
-                }
-                else if (self.cartridge_type == CartridgeType::Eeprom512 || self.cartridge_type == CartridgeType::Eeprom8192) && (addr == 0x1000001 || addr == 0x1ffff01){
-                    0
-                }
-                else{
-                    self.mapped_mem[(MemoryRegion::Cartridge as usize,addr)]
+            MemoryRegion::Arm9Bios => {
+                let offset = (addr & 0b11) << 3;
+                //let range = 0b11111111 << (offset);
+                if self.arm9.actual_pc >= 0x800 {
+                    warn!(
+                        "attempt for arm9 CPU to read BIOS from outside, {} {:#x}",
+                        offset, self.arm9.last_fetched_bios_instr
+                    );
+                    ((self.arm9.last_fetched_bios_instr >> offset) & 0b11111111) as u8
+                } else {
+                    //self.cpu.last_fetched_bios_instr &= !range;
+                    //self.cpu.last_fetched_bios_instr = (self.mapped_mem[region as usize][addr] as u32) << offset;
+                    self.mapped_mem[(region as usize, addr)]
                 }
             }
             MemoryRegion::Illegal => {
                 let range = (addr & 0b11) << 3;
-                (self.cpu.pipeline_instr.get(1).unwrap() >> range) as u8
-            },
-            _ => self.mapped_mem[(region as usize,addr)],
+                (self.arm9.pipeline_instr.get(1).unwrap() >> range) as u8
+            }
+            _ => self.mapped_mem[(region as usize, addr)],
         }
     }
 
     #[inline(always)]
     fn internal_write_byte(&mut self, addr: usize, region: MemoryRegion, val: u8) {
         match region {
-            MemoryRegion::IO => {
+            MemoryRegion::Arm9Io | MemoryRegion::Arm7Io => {
                 if (0x65..=0x301).contains(&addr) {
                     match addr {
                         0x301 => {
-                            if val >> 7 > 0 {
-                                // todo: add handling for STOP state (pause sound, PPU and cpu)
-                            } else {
-                                // request that CPU is paused until next interrupt
-                                self.cpu.halt();
+                            if region == MemoryRegion::Arm7Io{
+                                if val >> 6 > 0 {
+                                    // todo: add handling for STOP state (pause sound, PPU and cpu, gba mode)
+                                } else {
+                                    // request that CPU is paused until next interrupt
+                                    self.arm9.halt();
+                                }
                             }
                         }
 
                         0x208 => {
-                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+                            if region == MemoryRegion::Arm9Io {
+                                self.arm9.interrupt_requested = self.arm9.check_interrupt(self);
+                            }
+                            else{
+                                self.arm7.interrupt_requested = self.arm7.check_interrupt(self);
+                            }
                         }
 
                         // special handling for REG_IF, interrupt handling
@@ -501,35 +651,63 @@ impl Bus {
                             self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
                             */
                             //let old = self.mapped_mem[region as usize][addr];
-                            
+
                             // only allow turning off interrupts through CPU
-                            self.mapped_mem[(region as usize,addr)] = (self.mapped_mem[(region as usize,addr)] ^ val) & self.mapped_mem[(region as usize,addr)];
-                            self.cpu.interrupt_requested = self.cpu.check_interrupt(self);
+                            self.mapped_mem[(region as usize, addr)] =
+                                (self.mapped_mem[(region as usize, addr)] ^ val)
+                                    & self.mapped_mem[(region as usize, addr)];
+                            if region == MemoryRegion::Arm9Io {
+                                self.arm9.interrupt_requested = self.arm9.check_interrupt(self);
+                            }
+                            else{
+                                self.arm7.interrupt_requested = self.arm7.check_interrupt(self);
+                            }
                             return;
                         }
 
                         // special handling for DMA
                         0xbb | 0xc7 | 0xd3 | 0xdf => {
-                            let old_val = self.mapped_mem[(region as usize,addr)];
-                            self.mapped_mem[(region as usize,addr)] = val;
+                            let old_val = self.mapped_mem[(region as usize, addr)];
+                            self.mapped_mem[(region as usize, addr)] = val;
                             let channel_no = (addr - 0xbb) / 12;
                             //info!("addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
-                            let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0 {
-                                DMA_Channel::new_enabled(channel_no, self)
-                                //info!("enabled dma, bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}", addr, val, channel_no, res.dest_addr);
-                            } else if val >> 7 == 0 {
-                                //info!("disabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
-                                DMA_Channel::new_disabled(channel_no)
-                            } else {
-                                //let res = DMA_Channel::new_enabled(channel_no, self);
-                                //if res.timing_mode != self.dma_channels[channel_no].timing_mode{
-                                //info!("debug dma new: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, val, channel_no, res.dest_addr, res.src_addr, res.timing_mode as u32);
-                                //info!("debug dma old: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, old_val, channel_no, self.dma_channels[channel_no].dest_addr, self.dma_channels[channel_no].src_addr, self.dma_channels[channel_no].timing_mode as u32);
-                                //}
-                                return;
-                            };
-                            self.dma_channels[channel_no] = dma_channel;
-                            self.set_is_any_dma_active();
+                            if region == MemoryRegion::Arm9Io{
+                                let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0 {
+                                    DMA_Channel::new_enabled(channel_no, self)
+                                    //info!("enabled dma, bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}", addr, val, channel_no, res.dest_addr);
+                                } else if val >> 7 == 0 {
+                                    //info!("disabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
+                                    DMA_Channel::new_disabled(channel_no)
+                                } else {
+                                    //let res = DMA_Channel::new_enabled(channel_no, self);
+                                    //if res.timing_mode != self.dma_channels[channel_no].timing_mode{
+                                    //info!("debug dma new: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, val, channel_no, res.dest_addr, res.src_addr, res.timing_mode as u32);
+                                    //info!("debug dma old: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, old_val, channel_no, self.dma_channels[channel_no].dest_addr, self.dma_channels[channel_no].src_addr, self.dma_channels[channel_no].timing_mode as u32);
+                                    //}
+                                    return;
+                                };
+                                self.dma_channels_arm9[channel_no] = dma_channel;
+                                self.set_is_any_dma_active::<true>();
+                            }
+                            else{
+                                let dma_channel = if val >> 7 > 0 && old_val >> 7 & 1 == 0 {
+                                    DMA_Channel::new_enabled(channel_no, self)
+                                    //info!("enabled dma, bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}", addr, val, channel_no, res.dest_addr);
+                                } else if val >> 7 == 0 {
+                                    //info!("disabled dma, addr: {:#x}, val: {:#010b}, channel_no: {}", addr, val, channel_no);
+                                    DMA_Channel::new_disabled(channel_no)
+                                } else {
+                                    //let res = DMA_Channel::new_enabled(channel_no, self);
+                                    //if res.timing_mode != self.dma_channels[channel_no].timing_mode{
+                                    //info!("debug dma new: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, val, channel_no, res.dest_addr, res.src_addr, res.timing_mode as u32);
+                                    //info!("debug dma old: bus addr: {:#x}, val: {:#010b}, channel_no: {}, dest_addr: {:#x}, src_addr: {:#x}, timing_mode: {}", addr, old_val, channel_no, self.dma_channels[channel_no].dest_addr, self.dma_channels[channel_no].src_addr, self.dma_channels[channel_no].timing_mode as u32);
+                                    //}
+                                    return;
+                                };
+                                self.dma_channels_arm7[channel_no] = dma_channel;
+                                self.set_is_any_dma_active::<false>();
+                            }
+                            
                             //info!("set dma flags");
                             return;
                         }
@@ -537,14 +715,28 @@ impl Bus {
                         // special handling for writing to timer count
                         0x100 | 0x101 | 0x104 | 0x105 | 0x108 | 0x109 | 0x10c | 0x10d => {
                             let timer_no = (addr - 0x100) >> 2;
-                            unsafe {
-                                let ptr = &mut self.timers[timer_no] as *mut Timer;
-                                if addr & 1 == 0 {
-                                    (*ptr).reload_val &= !0b11111111;
-                                    (*ptr).reload_val |= val as u16;
-                                } else {
-                                    (*ptr).reload_val &= 0b11111111;
-                                    (*ptr).reload_val |= (val as u16) << 8;
+                            if region == MemoryRegion::Arm9Io{
+                                unsafe {
+                                    let ptr = &mut self.arm9_timers[timer_no] as *mut Timer<true>;
+                                    if addr & 1 == 0 {
+                                        (*ptr).reload_val &= !0b11111111;
+                                        (*ptr).reload_val |= val as u16;
+                                    } else {
+                                        (*ptr).reload_val &= 0b11111111;
+                                        (*ptr).reload_val |= (val as u16) << 8;
+                                    }
+                                }
+                            }
+                            else{
+                                unsafe {
+                                    let ptr = &mut self.arm7_timers[timer_no] as *mut Timer<false>;
+                                    if addr & 1 == 0 {
+                                        (*ptr).reload_val &= !0b11111111;
+                                        (*ptr).reload_val |= val as u16;
+                                    } else {
+                                        (*ptr).reload_val &= 0b11111111;
+                                        (*ptr).reload_val |= (val as u16) << 8;
+                                    }
                                 }
                             }
                         }
@@ -553,18 +745,30 @@ impl Bus {
                         0x102 | 0x106 | 0x10a | 0x10e => {
                             let timer_no = (addr - 0x102) >> 2;
                             unsafe {
-                                let ptr = &mut self.timers[timer_no] as *mut Timer;
-                                (*ptr).set_period(val & 0b11);
-                                (*ptr).is_cascading = (val >> 2) & 1 > 0;
-                                (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
-                                (*ptr).set_is_enabled((val >> 7) & 1 > 0);
+                                if region == MemoryRegion::Arm9Io{
+                                    let ptr = &mut self.arm9_timers[timer_no] as *mut Timer<true>;
+                                    (*ptr).set_period(val & 0b11);
+                                    (*ptr).is_cascading = (val >> 2) & 1 > 0;
+                                    (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
+                                    (*ptr).set_is_enabled((val >> 7) & 1 > 0);
+                                }
+                                else{
+                                    let ptr = &mut self.arm7_timers[timer_no] as *mut Timer<false>;
+                                    (*ptr).set_period(val & 0b11);
+                                    (*ptr).is_cascading = (val >> 2) & 1 > 0;
+                                    (*ptr).raise_interrupt = (val >> 6) & 1 > 0;
+                                    (*ptr).set_is_enabled((val >> 7) & 1 > 0);
+                                }
                                 self.set_is_any_timer_active();
                             }
                         }
 
+                        // NOTE: below is old gba sound. turned off for now. 
+
+                        /*
                         // special handling for square sound channels; reset
                         0x65 | 0x6d => {
-                            self.mapped_mem[(region as usize,addr)] = val;
+                            self.mapped_mem[(region as usize, addr)] = val;
                             let square_chan_num = match addr {
                                 0x65 => 0,
                                 0x6d => 1,
@@ -581,7 +785,7 @@ impl Bus {
 
                         // special handling for wave sound channel (official name: DMG channel 3)
                         0x75 => {
-                            self.mapped_mem[(region as usize,addr)] = val;
+                            self.mapped_mem[(region as usize, addr)] = val;
                             if (val >> 7) & 1 > 0 {
                                 let ptr = &mut self.apu as *mut Apu;
                                 unsafe {
@@ -590,6 +794,7 @@ impl Bus {
                             }
                             return;
                         }
+                        
 
                         // special handling for enabling sound channels 0 - 3
                         /*0x04000081 => {
@@ -641,8 +846,8 @@ impl Bus {
                         // special handling for inserting into wave sound channel bank
                         0x90..=0x9f => {
                             let ind = addr - 0x90;
-                            let bank = (self.mapped_mem[(region as usize,0x70)] >> 5)
-                                & !(self.mapped_mem[(region as usize,0x70)] >> 6)
+                            let bank = (self.mapped_mem[(region as usize, 0x70)] >> 5)
+                                & !(self.mapped_mem[(region as usize, 0x70)] >> 6)
                                 & 1;
                             self.apu.wave_bank[bank as usize][ind] = val;
 
@@ -652,24 +857,26 @@ impl Bus {
 
                         // special handling for wave channel disable/enable
                         0x70 => {
-                            if (val ^ self.mapped_mem[(region as usize,addr)]) >> 7 > 0 {
+                            if (val ^ self.mapped_mem[(region as usize, addr)]) >> 7 > 0 {
                                 self.apu.wave_sweep_cnt = 0;
                             }
                         }
+                        
 
                         0x84 => {
                             if (val >> 7) & 1 == 0 {
                                 for i in 0x60..=0x81 {
-                                    self.mapped_mem[(region as usize,i)] = 0;
+                                    self.mapped_mem[(region as usize, i)] = 0;
                                 }
                             }
                         }
                         _ => {}
+                        */
                     }
                 }
-                self.mapped_mem[(region as usize,addr)] = val;
+                self.mapped_mem[(region as usize, addr)] = val;
             }
-            MemoryRegion::Bios => {
+            MemoryRegion::Arm7Bios | MemoryRegion::Arm9Bios => {
                 // do nothing, writing to BIOS is illegal
             }
             MemoryRegion::CartridgeSram => {
@@ -679,7 +886,7 @@ impl Bus {
                         self.internal_write_byte_flash(addr, val);
                     }
                     CartridgeType::Sram => {
-                        self.mapped_mem[(region as usize,addr)] = val;
+                        self.mapped_mem[(region as usize, addr)] = val;
                     }
                     _ => {
                         warn!(
@@ -693,7 +900,7 @@ impl Bus {
                 //warn!("illegal memory write");
             }
             _ => {
-                self.mapped_mem[(region as usize,addr)] = val;
+                self.mapped_mem[(region as usize, addr)] = val;
             }
         };
     }
@@ -724,13 +931,18 @@ impl Bus {
             }
             _ => match self.cartridge_type {
                 CartridgeType::Flash64 => {
-                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
-                        config::FLASH64_MEM_START + (addr & 0xffff))]
+                    self.mapped_mem[(
+                        MemoryRegion::CartridgeSram as usize,
+                        config::FLASH64_MEM_START + (addr & 0xffff),
+                    )]
                 }
                 CartridgeType::Flash128 => {
-                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,config::FLASH128_MEM_START
-                        + (addr & 0xffff)
-                        + ((self.cartridge_type_state[3] as usize) << 16))]
+                    self.mapped_mem[(
+                        MemoryRegion::CartridgeSram as usize,
+                        config::FLASH128_MEM_START
+                            + (addr & 0xffff)
+                            + ((self.cartridge_type_state[3] as usize) << 16),
+                    )]
                 }
                 _ => unreachable!("cartridge type is not flash"),
             },
@@ -743,14 +955,18 @@ impl Bus {
             3 => {
                 match self.cartridge_type {
                     CartridgeType::Flash64 => {
-                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
-                            config::FLASH64_MEM_START + (addr & 0xffff))] = val;
+                        self.mapped_mem[(
+                            MemoryRegion::CartridgeSram as usize,
+                            config::FLASH64_MEM_START + (addr & 0xffff),
+                        )] = val;
                     }
                     CartridgeType::Flash128 => {
-                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,
+                        self.mapped_mem[(
+                            MemoryRegion::CartridgeSram as usize,
                             config::FLASH128_MEM_START
                                 + (addr & 0xffff)
-                                + ((self.cartridge_type_state[3] as usize) << 16))] = val;
+                                + ((self.cartridge_type_state[3] as usize) << 16),
+                        )] = val;
                     }
                     _ => unreachable!("cartridge type is not flash"),
                 }
@@ -789,7 +1005,8 @@ impl Bus {
                                     _ => unreachable!("cartridge type is not flash"),
                                 };
                                 for i in addr..addr + 0x1000 {
-                                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize,i)] = 0xff;
+                                    self.mapped_mem[(MemoryRegion::CartridgeSram as usize, i)] =
+                                        0xff;
                                 }
                                 self.cartridge_type_state[0] = 0;
                                 self.cartridge_type_state[1] = 0;
@@ -837,7 +1054,7 @@ impl Bus {
                         _ => unreachable!("logical error: execute_flash_storage_command is caled, but cartridge type is not FLASH64 or FLASH128"),
                     };
                     for i in start..end {
-                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize,i)] = 0xff;
+                        self.mapped_mem[(MemoryRegion::CartridgeSram as usize, i)] = 0xff;
                     }
                 }
                 self.cartridge_type_state[4] = 0;
@@ -856,7 +1073,7 @@ impl Bus {
     }
 
     #[inline(always)]
-    fn addr_match(
+    fn addr_match<const IS_ARM9: bool>(
         &self,
         addr: usize,
         chunk_size: ChunkSize,
@@ -865,87 +1082,133 @@ impl Bus {
         //if addr >= 0x4000000 && addr < 0x4700000 {
         //    return (addr % 0x0010000) + 0x4000000;
         //}
+
+        if IS_ARM9
+            && self.tcm_readable
+            && addr >= self.dtcm_addr
+            && addr < self.dtcm_addr + self.dtcm_size
+        {
+            return (addr - self.dtcm_addr, MemoryRegion::DTcm);
+        }
+
         match addr >> 24 {
             0 | 1 => {
-                if addr >= 0x4000 {
+                if IS_ARM9 {
+                    (addr & 0x7fff, MemoryRegion::ITcm)
+                } else if addr >= 0x4000 {
                     #[cfg(feature = "debug_instr")]
                     warn!("illegal memory address: {:#x}", addr);
                     (addr, MemoryRegion::Illegal)
                 } else {
-                    (addr, MemoryRegion::Bios)
+                    (addr, MemoryRegion::Arm7Bios)
                 }
             }
-            2 => ((addr & 0x3ffff), MemoryRegion::BoardWram),
-            3 => ((addr & 0x7fff), MemoryRegion::ChipWram),
+            2 => ((addr & 0x3fffff), MemoryRegion::MainMemory),
+            3 => {
+                if !IS_ARM9 && addr >= 0x3800000 {
+                    return (addr & 0xffff, MemoryRegion::Arm7Wram);
+                }
+                let bits = self.read_byte_raw(0x247, MemoryRegion::Arm9Io) & 0b11;
+                let size = match (bits, IS_ARM9) {
+                    (0b00, true) => 32 * 1024,
+                    (0b00, false) => 0,
+                    (0b01, _) | (0b10, _) => 16 * 1024,
+                    (0b11, true) => 0,
+                    (0b11, false) => 32 * 1024,
+                    _ => unreachable!(),
+                };
+                if size == 32 * 1024 || (size == 0 && IS_ARM9) {
+                    return (addr & (32 * 1024 - 1), MemoryRegion::SharedWram);
+                }
+                if size == 16 * 1024 {
+                    if (bits == 0b01 && !IS_ARM9) || (bits == 0b10 && IS_ARM9) {
+                        // first region
+                        return (addr & (16 * 1024 - 1), MemoryRegion::SharedWram);
+                    } else {
+                        // second region
+                        return (
+                            (addr & (16 * 1024 - 1)) + 16 * 1024,
+                            MemoryRegion::SharedWram,
+                        );
+                    }
+                }
+                assert!(size == 0 && !IS_ARM9);
+                return (addr & 0xffff, MemoryRegion::Arm7Wram);
+            }
             4 => {
-                if addr >= 0x04000400 {
+                if !IS_ARM9 && addr > 0x4800000 {
+                    // TODO
+                    (addr, MemoryRegion::Arm7WirelessWaitstates)
+                } else if addr >= 0x04000800 {
                     (addr, MemoryRegion::Illegal)
                 } else {
                     // NOTE: not mirrored (maybe todo)
-                    ((addr & 0x3ff), MemoryRegion::IO)
+                    (
+                        (addr & 0x7ff),
+                        if IS_ARM9 {
+                            MemoryRegion::Arm9Io
+                        } else {
+                            MemoryRegion::Arm7Io
+                        },
+                    )
                 }
             }
             5 => {
-                if !is_read {
-                    if let ChunkSize::Byte = chunk_size {
-                        return (0, MemoryRegion::Illegal);
-                    }
+                if IS_ARM9 {
+                    ((addr & 0x7ff), MemoryRegion::Palette)
+                } else {
+                    // this region cannot be accessed by arm7 cpu
+                    (addr, MemoryRegion::Illegal)
                 }
-                ((addr & 0x3ff), MemoryRegion::Palette)
             }
             6 => {
                 if !is_read {
                     if let ChunkSize::Byte = chunk_size {
+                        warn!("write byte to vram, not legal");
                         return (0, MemoryRegion::Illegal);
                     }
                 }
-                let mut m = addr & 0x1ffff;
-                if m >= 98304 {
-                    m -= 32768;
+                if IS_ARM9 {
+                    match (addr >> 20) & 0b1111 {
+                        0 | 1 => (addr & (0x80000 - 1), MemoryRegion::VramBgA),
+                        2 | 3 => (addr & (0x20000 - 1), MemoryRegion::VramBgB),
+                        4 | 5 => (addr & (0x40000 - 1), MemoryRegion::VramObjA),
+                        6 | 7 => (addr & (0x20000 - 1), MemoryRegion::VramObjB),
+                        _ => {
+                            if addr > 0x06800000 + 656 * 1024 {
+                                warn!("out of bounds access to lcdc vram");
+                                (0, MemoryRegion::Illegal)
+                            } else {
+                                (addr - 0x06800000, MemoryRegion::VramLcdc)
+                            }
+                        }
+                    }
+                } else {
+                    // vram shared as work memory to arm7, assume always turned ons
+                    let new_addr = addr & (256 * 1024 - 1);
+                    (new_addr + 256 * 1024, MemoryRegion::VramLcdc)
                 }
-                (m, MemoryRegion::Vram)
             }
             7 => {
-                if !is_read {
-                    if let ChunkSize::Byte = chunk_size {
-                        return (0, MemoryRegion::Illegal);
-                    }
+                if IS_ARM9 {
+                    (addr & 0x7ff, MemoryRegion::Oam)
+                } else {
+                    warn!("arm7 attempted access to region 7, not defined");
+                    (0, MemoryRegion::Illegal)
                 }
-                ((addr & 0x3ff), MemoryRegion::Oam)
             }
-            8 | 9 | 10 | 11 => {
-                if !is_read {
-                    return (0, MemoryRegion::Illegal);
-                }
-                //(addr, MemoryRegion::Cartridge)
-                ((addr & 0x1ffffff), MemoryRegion::Cartridge)
-            },
-            12 | 13 => {
-                if !is_read {
-                    return (0, MemoryRegion::Illegal);
-                }
-                //(addr, MemoryRegion::Cartridge)
-                ((addr & 0x1ffffff), MemoryRegion::CartridgeUpper)
-            },
-            14 | 15 => {
-                /*match self.cartridge_type{
-                    CartridgeType::FLASH64 | CartridgeType::FLASH128 => {
-                        if !is_read {
-                            if let ChunkSize::Byte = chunk_size{
-                                return (0, MemoryRegion::Illegal)
-                            }
-                        }
+            0xff => {
+                if IS_ARM9 && addr > 0xffff0000 {
+                    let new_addr = addr - 0xffff0000;
+                    if new_addr < 32 * 1024 {
+                        return (new_addr, MemoryRegion::Arm9Bios);
                     }
-                    CartridgeType::SRAM => {
-                        if !is_read {
-                            if ChunkSize::Byte != chunk_size{
-                                return (0, MemoryRegion::Illegal)
-                            }
-                        }
-                    }
-                    _ => {},
-                }*/
-                ((addr & 0xffff), MemoryRegion::CartridgeSram)
+                }
+                warn!(
+                    "failed attempt to access 0xff: is_arm9: {}, addr: {:#x}",
+                    IS_ARM9, addr
+                );
+                (0, MemoryRegion::Illegal)
             }
             _ => {
                 #[cfg(feature = "debug_instr")]

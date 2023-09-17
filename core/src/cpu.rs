@@ -6,7 +6,7 @@ use log::warn;
 use crate::{
     bus::{Bus, MemoryRegion},
     config,
-    dma_channel::DMA_Channel,
+    dma_channel::DMA_Channel, cp15::{Cp15, Cp15Register},
 };
 use std::{cmp::min, collections::{HashMap, VecDeque}, num::Wrapping};
 
@@ -73,7 +73,7 @@ pub enum Flag {
     T = 5,
 }
 
-pub struct Cpu {
+pub struct Cpu<const IS_ARM9: bool> {
     //arm_instr_table: Vec<fn(&mut Cpu, &mut Bus) -> u32>,
     reg: [u32; 37],
     pub instr: u32,
@@ -103,8 +103,8 @@ pub struct Cpu {
     pub last_fetched_bios_instr: u32,
 }
 
-impl Cpu {
-    pub fn new() -> Cpu {
+impl<const IS_ARM9: bool> Cpu<IS_ARM9>  {
+    pub fn new() -> Cpu<IS_ARM9>  {
         let mut res = Cpu {
             //arm_instr_table: Cpu::generate_arm_decode_table(),
             reg: [0; 37],
@@ -327,7 +327,7 @@ impl Cpu {
         self.instr = self.pipeline_instr.pop_front().unwrap();
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
-                bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::Bios) as u32;
+                bus.read_word_raw(self.actual_pc as usize + 8, if IS_ARM9{MemoryRegion::Arm9Bios} else {MemoryRegion::Arm7Bios}) as u32;
         }
     }
 
@@ -411,7 +411,13 @@ impl Cpu {
                 #[cfg(feature = "debug_instr")]
                 self.debug("        MSR");
                 self.execute_msr()
-            } else {
+            } 
+            else if (self.instr >> 24) & 0b1111 == 0b1110 && (self.instr >> 4) & 0b1 == 1{
+                #[cfg(feature = "debug_instr")]
+                self.debug("        MRC MCR");
+                self.execute_mrc_mcr(bus)
+            }
+            else {
                 match (self.instr >> 25) & 0b111 {
                     0b000 | 0b001 => {
                         #[cfg(feature = "debug_instr")]
@@ -1093,12 +1099,21 @@ impl Cpu {
             (true, false) => {
                 let mut res = bus.read_word(addr).rotate_right(rotate);
                 if reg == Register::R15 as u32 {
-                    res &= 0xfffffffc;
+                    if !IS_ARM9 {
+                        res &= 0xfffffffc;
+                    }
                     self.actual_pc = res;
                     // NOTE: may not be correct, maybe comment out
                     self.pipeline_instr.clear();
                     self.increment_pc = false;
                     cycles += 2;
+
+                    // reference https://shonumi.github.io/articles/art3.html
+                    // if on arm9, LDR can change to thumb mode
+                    if IS_ARM9 && self.read_pc() & 1 > 0{
+                        self.set_flag(Flag::T, true);
+                        self.actual_pc = (self.actual_pc >> 1) << 1;
+                    }
                 }
                 self.set_reg(reg, res);
                 /*
@@ -1342,6 +1357,71 @@ impl Cpu {
         4
     }
 
+    // adapted from https://github.com/shonumi/gbe-plus
+    #[inline(always)]
+    fn execute_mrc_mcr(&mut self, bus: &mut Bus) -> u32 {
+        let cp_opc = (self.instr >> 21) & 0b111;
+        if cp_opc != 0
+        {
+            warn!("MRC MCR cp_opc != 0");
+            return 0;
+        }
+        let arm_opc = (self.instr & 0x100000) > 0;
+
+        let cop_reg = (self.instr >> 16) & 0xF;
+        let arm_reg = (self.instr >> 12) & 0xF;
+
+        let cop_op = self.instr & 0xF;
+
+        let cop_info = (self.instr >> 5) & 0x7;
+
+        let tuple = (cop_reg, cop_op, cop_info);
+
+        if arm_opc{
+            match Cp15::tuple_to_cp15_reg(tuple){
+                Some(reg) => {
+                    self.set_reg(arm_reg, bus.cp15.reg[reg as usize]);
+                }
+                None => warn!("failed to map tuple mrc: ({}, {}, {})", tuple.0, tuple.1, tuple.2)
+            }
+
+            return 3;
+        }
+
+        let reg_val = self.read_reg(arm_reg);
+
+        match Cp15::tuple_to_cp15_reg(tuple){
+            Some(Cp15Register::C1_C0_0) => {                
+                // notes from gbatek and shonumi:
+                //Bits 0, 2, 7, and 12-19 are RW
+			    //Bits 3-6 are always set
+                
+                bus.cp15.reg[Cp15Register::C1_C0_0 as usize] = reg_val & 0xFF0FD;
+			    bus.cp15.reg[Cp15Register::C1_C0_0 as usize] |= 0x78;
+
+                bus.dtcm_load_mode = (bus.cp15.reg[Cp15Register::C1_C0_0 as usize] & 0x20000) > 0;
+                bus.itcm_load_mode = (bus.cp15.reg[Cp15Register::C1_C0_0 as usize] & 0x80000) > 0;
+            }
+            Some(Cp15Register::C9_C1_0) => {
+                bus.cp15.reg[Cp15Register::C9_C1_0 as usize] = Cp15::get_dtcm_addr(reg_val);
+                bus.dtcm_addr = bus.cp15.reg[Cp15Register::C9_C1_0 as usize] as usize;
+                bus.dtcm_size = 512 << ((bus.cp15.reg[Cp15Register::C9_C1_0 as usize] >> 1) & 0x1F);
+            }
+            Some(reg) => {
+                bus.cp15.reg[reg as usize] = reg_val;
+            }
+            None => warn!("failed to map tuple mcr: ({}, {}, {})", tuple.0, tuple.1, tuple.2)
+        }
+
+        // halt cpu
+        if tuple == (7, 0, 4){
+            self.halt();
+        }
+
+        // this cycle number is not correct, but probably doesnt matter
+        3
+    }
+
     // ---------- miscellaneous helpers
     #[inline(always)]
     fn check_cond(&self, cond: u32) -> bool {
@@ -1580,7 +1660,7 @@ impl Cpu {
         self.instr = self.pipeline_instr.pop_front().unwrap() as u16 as u32;
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
-                bus.read_word_raw(self.actual_pc as usize + 4, MemoryRegion::Bios) as u32;
+                bus.read_word_raw(self.actual_pc as usize + 4, if IS_ARM9{MemoryRegion::Arm9Bios} else {MemoryRegion::Arm7Bios}) as u32;
         }
     }
 
@@ -2470,9 +2550,10 @@ impl Cpu {
 
     #[inline(always)]
     pub fn check_interrupt(&self, bus: &Bus) -> bool {
-        //!self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
-        bus.read_byte_raw(0x208, MemoryRegion::IO) & 1 == 1 && // check that IME interrupt is turned on
-        bus.read_halfword_raw(0x202, MemoryRegion::IO) & bus.read_halfword_raw(0x200, MemoryRegion::IO) > 0
+        let io_region = if IS_ARM9{MemoryRegion::Arm9Io} else {MemoryRegion::Arm7Io};
+        // !self.read_flag(Flag::I) && // check that interrupt flag is turned off (on means interrupts are disabled)
+        bus.read_byte_raw(0x208, io_region) & 1 == 1 && // check that IME interrupt is turned on
+        bus.read_word_raw(0x210, io_region) & bus.read_word_raw(0x214, io_region) > 0
         // check that an interrupt for an active interrupt type has been requested
     }
 
@@ -2484,7 +2565,7 @@ impl Cpu {
         self.reg[Register::R14_irq as usize] = self.actual_pc + 4;
         let mut cpsr = self.reg[Register::Cpsr as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;
-        self.actual_pc = 0x18;
+        self.actual_pc = if !IS_ARM9{0x18} else {0xFFFF0018};
         self.pipeline_instr.clear();
         self.increment_pc = false;
 
@@ -2512,7 +2593,9 @@ impl Cpu {
         };
         let mut cpsr = self.reg[Register::Cpsr as usize];
         self.reg[Register::SPSR_svc as usize] = cpsr;
-        self.actual_pc = 0x8;
+
+        // TODO: this may not be correct, guessing based on GBA
+        if !IS_ARM9{0x8} else {0xFFFF0008};
         self.pipeline_instr.clear();
         self.increment_pc = false;
 
@@ -2534,7 +2617,14 @@ impl Cpu {
     // ---------- DMA
     #[inline(always)]
     pub fn check_dma(&self, bus: &Bus) -> bool {
-        bus.is_any_dma_active && bus.dma_channels.iter().any(|x| x.check_is_active(bus))
+        if IS_ARM9 && bus.is_any_arm9_dma_active && bus.dma_channels_arm9.iter().any(|x| x.check_is_active(bus)){
+            return true;
+        }
+        if !IS_ARM9 && bus.is_any_arm7_dma_active && bus.dma_channels_arm7.iter().any(|x| x.check_is_active(bus)){
+            return true;
+        }
+        return false;
+        // bus.is_any_dma_active && ((IS_ARM9 && bus.dma_channels_arm9.iter().any(|x| x.check_is_active(bus))) || (!IS_ARM9 && bus.dma_channels_arm7.iter().any(|x| x.check_is_active(bus))))
     }
 
     #[inline(always)]
@@ -2543,13 +2633,22 @@ impl Cpu {
         let mut ex1 = false;
         //info!("dma start");
         for i in 0..4 {
-            if !bus.dma_channels[i].check_is_active(bus) {
+            if IS_ARM9 && !bus.dma_channels_arm9[i].check_is_active(bus) {
+                continue;
+            }
+            if !IS_ARM9 && !bus.dma_channels_arm7[i].check_is_active(bus) {
                 continue;
             }
             // unsafe in order to prevent unnecessary cloning
             unsafe {
-                let ptr = &mut bus.dma_channels[i] as *mut DMA_Channel;
-                res += (*ptr).execute_dma(bus);
+                if IS_ARM9{
+                    let ptr = &mut bus.dma_channels_arm9[i] as *mut DMA_Channel<true>;
+                    res += (*ptr).execute_dma(bus);
+                }
+                else{
+                    let ptr = &mut bus.dma_channels_arm7[i] as *mut DMA_Channel<false>;
+                    res += (*ptr).execute_dma(bus);
+                }
             }
             ex1 = true;
             // safe code here:
