@@ -571,7 +571,12 @@ impl Bus {
                         0x10d => (self.arm7_timers[3].timer_count >> 8) as u8,
                         _ => self.mapped_mem[(region as usize, addr)],
                     }
-                } else {
+                }
+                // vramstat: assume vram c and d are available 
+                else if addr == 0x240{
+                    0b11
+                }
+                 else {
                     self.mapped_mem[(region as usize, addr)]
                 }
             }
