@@ -1,0 +1,15 @@
+[package]
+name = "gba-sim"
+version = "0.1.0"
+authors = ["Zhizhou Ma <zm9913@gmail.com>"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+gba-core = {path = "../core"}
+serde = { version = "1.0.198", features = ["derive"] }
+# serde_json = { version = "1.0.133" }
+bitcode = { version = "0.6.3", features = ["serde"] }
+image = "0.25.1"
+clap = { version = "3.1.18", features = ["derive"] }

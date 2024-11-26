@@ -23,11 +23,11 @@ pub enum KeyInput {
     Save4 = 15,
 }
 
-impl TryFrom<u8> for KeyInput{
+impl TryFrom<u8> for KeyInput {
     type Error = ();
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Ok(match value{
+        Ok(match value {
             0 => KeyInput::A,
             1 => KeyInput::B,
             2 => KeyInput::Select,
@@ -44,8 +44,14 @@ impl TryFrom<u8> for KeyInput{
             13 => KeyInput::Save2,
             14 => KeyInput::Save3,
             15 => KeyInput::Save4,
-            _ => return Err(())
+            _ => return Err(()),
         })
+    }
+}
+
+impl Into<u8> for KeyInput {
+    fn into(self) -> u8 {
+        self as u8
     }
 }
 
@@ -108,6 +114,17 @@ impl InputHandler {
                 }
             }
         }
+    }
+
+    // CR-someday zhizma: use the below, decouple saves/speedup from keys
+    #[inline(always)]
+    pub fn process_speedup(&mut self, enable: bool) {
+        self.cur_speedup_state = enable
+    }
+
+    #[inline(always)]
+    pub fn process_save(&mut self, index: usize) {
+        self.save_requested[index] = true
     }
 
     // must be called before processing keys for each frame

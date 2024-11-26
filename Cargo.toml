@@ -2,6 +2,7 @@
 
 members = [
     "core",
+    "sim",
     "frontends/desktop-native",
     "frontends/wasm",
     "frontends/headless",
@@ -15,7 +16,7 @@ default-members = [
 overflow-checks = false
 
 [profile.release]
-lto = true
+lto = "thin"
 opt-level = 3
 
 [profile.release-symbols]

@@ -1,17 +1,9 @@
-
 use std::convert::TryInto;
 
 use gba_core::{marshall_save_state, KeyInput, GBA};
 use js_sys::{Float32Array, Uint8Array};
 use wasm_bindgen::{prelude::*, Clamped};
 use web_sys::CanvasRenderingContext2d;
-// When the `wee_alloc` feature is enabled, this uses `wee_alloc` as the global
-// allocator.
-//
-// If you don't want to use `wee_alloc`, you can safely delete this.
-#[cfg(feature = "wee_alloc")]
-#[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 #[wasm_bindgen]
 pub struct GbaWasm {
@@ -35,7 +27,7 @@ impl GbaWasm {
                 bios_bin,
                 rom_bin,
                 save_state.map(|x| marshall_save_state(&x.to_vec())),
-                save_state_bank.map(|x|x as usize),
+                save_state_bank.map(|x| x as usize),
                 None,
                 sample_rate as usize,
             ),

@@ -8,7 +8,11 @@ use crate::{
     config,
     dma_channel::DMA_Channel,
 };
-use std::{cmp::min, collections::{HashMap, VecDeque}, num::Wrapping};
+use std::{
+    cmp::min,
+    collections::{HashMap, VecDeque},
+    num::Wrapping,
+};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register {
@@ -101,6 +105,7 @@ pub struct Cpu {
     bios_end: bool,
 
     pub last_fetched_bios_instr: u32,
+    dma_check_counter: u64,
 }
 
 impl Cpu {
@@ -268,6 +273,7 @@ impl Cpu {
             bios_end: false,
 
             last_fetched_bios_instr: 0,
+            dma_check_counter: 0,
         };
         //res.set_reg(13, 0x03007F00);
         //res.reg[Register::R13_svc as usize] = 0x02FFFFF0;
@@ -318,19 +324,21 @@ impl Cpu {
     // -------------- ARM INSTRUCTIONS -----------------
 
     #[inline(always)]
-    fn fetch_arm_instr(&mut self, bus: &mut Bus){
-        if self.pipeline_instr.is_empty(){
-            self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize));
-            self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize + 4));
+    fn fetch_arm_instr(&mut self, bus: &mut Bus) {
+        if self.pipeline_instr.is_empty() {
+            self.pipeline_instr
+                .push_back(bus.read_word(self.actual_pc as usize));
+            self.pipeline_instr
+                .push_back(bus.read_word(self.actual_pc as usize + 4));
         }
-        self.pipeline_instr.push_back(bus.read_word(self.actual_pc as usize + 8));
+        self.pipeline_instr
+            .push_back(bus.read_word(self.actual_pc as usize + 8));
         self.instr = self.pipeline_instr.pop_front().unwrap();
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
                 bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::Bios) as u32;
         }
     }
-
 
     // completes one instruction. Returns number of clock cycles
     #[inline(always)]
@@ -1568,8 +1576,8 @@ impl Cpu {
     }*/
 
     #[inline(always)]
-    fn fetch_thumb_instr(&mut self, bus: &mut Bus){
-        if self.pipeline_instr.is_empty(){
+    fn fetch_thumb_instr(&mut self, bus: &mut Bus) {
+        if self.pipeline_instr.is_empty() {
             let data = bus.read_halfword(self.actual_pc as usize) as u32;
             self.pipeline_instr.push_back(data + (data << 16));
             let data = bus.read_halfword(self.actual_pc as usize + 2) as u32;
@@ -2533,8 +2541,11 @@ impl Cpu {
 
     // ---------- DMA
     #[inline(always)]
-    pub fn check_dma(&self, bus: &Bus) -> bool {
-        bus.is_any_dma_active && bus.dma_channels.iter().any(|x| x.check_is_active(bus))
+    pub fn check_dma(&mut self, bus: &Bus) -> bool {
+        self.dma_check_counter += 1;
+        self.dma_check_counter & config::DMA_CHECK_INTERVAL == 0
+            && bus.is_any_dma_active
+            && bus.dma_channels.iter().any(|x| x.check_is_active(bus))
     }
 
     #[inline(always)]

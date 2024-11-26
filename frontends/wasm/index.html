@@ -39,7 +39,6 @@
 </style>
 
 <body>
-  <script src="index.js"></script>
   <div class="container">
     <h3>Gameboy Advance emulator</h3>
     <div class="container2">
@@ -74,7 +73,7 @@
             <option label="5">4</option>
           </select>
         </span>
-        
+
         <span style="display: inline;">
           <button id="reset_button">Start / Restart</button>
           <button id="download_save_button">Download Save</button>
@@ -133,8 +132,8 @@
             <td>Directional control pad</td>
           </tr>
         </table>
-        
-        <br/>
+
+        <br />
 
         <b>
           Extra Controls:
@@ -170,11 +169,15 @@
       <ul>
         <li>Emulator written in Rust, compiled to WebAssembly, with a wrapper written in
           JavaScript.</li>
-          <li>Fully functional audio, visuals, and can play most games at native 60FPS or higher (please drop an issue if anything doesn't work)</li>
+        <li>Fully functional audio, visuals, and can play most games at native 60FPS or higher (please drop an issue if
+          anything doesn't work)</li>
         <li>Source code: <a href="https://github.com/zhiz-m/gba_rust">https://github.com/zhiz-m/gba_rust</a></li>
       </ul>
     </div>
   </div>
+
+  <script src='pkg/gba_rust_wasm.js'></script>
+  <script src="index.js"></script>
 </body>
 
 </html>

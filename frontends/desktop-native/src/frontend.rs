@@ -176,6 +176,7 @@ impl Frontend {
             while let Ok(fps) = self.fps_receiver.try_recv() {
                 self.cur_fps = fps;
                 self.avg_fps = self.avg_fps * 0.8 + 0.2 * self.cur_fps;
+                println!("avg_fps: {}", self.avg_fps);
                 self.window
                     .as_ref()
                     .unwrap()

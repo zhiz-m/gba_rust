@@ -4,6 +4,7 @@ mod logger;
 
 use clap::Parser;
 use frontend::Frontend;
+use gba_sim::StateLogger;
 use log::{info, warn};
 
 use std::{
@@ -39,6 +40,10 @@ struct Arguments {
     /// Name of the preferred audio device
     #[clap(short = 'a', long)]
     audio_device: Option<String>,
+
+    /// Path to save sim state
+    #[clap(short = 't', long)]
+    sim_state_path: Option<String>,
 }
 
 fn main() {
@@ -61,6 +66,9 @@ fn main() {
 
     // fps
     let (tx4, rx4) = mpsc::channel();
+
+    // finish
+    let (tx5, rx5) = mpsc::channel();
 
     let bios_bin = read(bios_path).expect("did not find BIOS file");
     let rom_bin = read(&cli.rom_path).expect("did not find ROM");
@@ -115,28 +123,32 @@ fn main() {
     let mut gba = gba_core::GBA::new(
         &bios_bin,
         &rom_bin,
-        save_state,
+        save_state.clone(),
         cli.save_state_bank,
         cli.cartridge_type_str.as_deref(),
         frontend.get_sample_rate(),
     );
 
-    thread::spawn(move || {
-        gba.init(
-            SystemTime::now()
+    let thread = thread::spawn(move || {
+        let save = match (save_state, cli.save_state_bank) {
+            (Some(save_state), Some(save_state_bank)) => Some((save_state, save_state_bank)),
+            _ => None,
+        };
+        let mut state_logger = StateLogger::new(cli.rom_path, save);
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+        gba.init(current_time);
+        state_logger.init(current_time);
+        loop {
+            let frame = gba.total_frames_passed();
+            let current_time = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_micros() as u64,
-        );
-        loop {
-            let sleep_micros = gba
-                .process_frame(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_micros() as u64,
-                )
-                .unwrap();
+                .as_micros() as u64;
+            state_logger.log_frame(frame, current_time);
+            let sleep_micros = gba.process_frame(current_time).unwrap();
             thread::sleep(Duration::from_micros(sleep_micros));
 
             // video
@@ -168,11 +180,22 @@ fn main() {
             // input
             while let Ok((key, is_pressed)) = rx2.try_recv() {
                 gba.process_key(key, is_pressed);
+                state_logger.log_key_input_for_current_frame(key, is_pressed);
             }
 
             //info!("process frame");
+            if let Ok(()) = rx5.try_recv() {
+                let state = state_logger.finalize();
+                if let Some(sim_state_path) = cli.sim_state_path {
+                    gba_sim::sim::save_state(&state, &sim_state_path);
+                }
+
+                break;
+            }
         }
     });
 
     frontend.start().unwrap();
+    tx5.send(()).unwrap();
+    thread.join().unwrap()
 }

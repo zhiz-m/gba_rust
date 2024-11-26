@@ -33,7 +33,8 @@ pub struct GBA {
     last_finished_time: u64,  // microseconds, continuous time
     last_fps_print_time: u64, // microseconds
 
-    frame_counter: u32,
+    frame_counter: u32, // this is used to for counting; it is sometimes reset to 0
+    total_frames_passed: u64, // this is always increasing
     fps: Option<f64>,
 
     started: bool,
@@ -85,6 +86,7 @@ impl GBA {
 
             frame_counter: 0,
             fps: None,
+            total_frames_passed: 0,
 
             started: false,
         }
@@ -97,6 +99,7 @@ impl GBA {
         self.started
     }
 
+    // todo: this is not a pure function despite its name. this should be changed
     pub fn get_screen_buffer(&mut self) -> Option<&ScreenBuffer> {
         self.ppu.get_screen_buffer()
     }
@@ -118,7 +121,7 @@ impl GBA {
         }
     }
 
-    pub fn get_save_state(&self) -> &[Vec<u8>]{
+    pub fn get_save_state(&self) -> &[Vec<u8>] {
         &self.save_state
     }
 
@@ -147,8 +150,8 @@ impl GBA {
         loop {
             let mut cur_min = 100_000_000;
             let mut cur_ans = Workflow::Timer;
-            for x in self.workflow_times.iter(){
-                if x.0 < cur_min{
+            for x in self.workflow_times.iter() {
+                if x.0 < cur_min {
                     cur_min = x.0;
                     cur_ans = x.1;
                 }
@@ -186,6 +189,7 @@ impl GBA {
                     }
 
                     self.frame_counter += 1;
+                    self.total_frames_passed += 1;
 
                     if self.frame_counter == config::FPS_RECORD_INTERVAL {
                         let since = current_time - self.last_fps_print_time;
@@ -217,6 +221,7 @@ impl GBA {
     }
 
     // perform some IO
+    // todo: maybe decouple IO handling from this.
     fn on_new_buffer(&mut self, current_time: u64) {
         // handle input once per frame
         //self.input_handler.process_input(&self.key_receiver, &mut self.bus);
@@ -238,5 +243,9 @@ impl GBA {
                 self.save_state_updated = true;
             }
         }
+    }
+
+    pub fn total_frames_passed(&self) -> u64 {
+        self.total_frames_passed
     }
 }

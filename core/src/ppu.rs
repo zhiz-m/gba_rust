@@ -35,6 +35,10 @@ impl Pixel {
     }
 }
 
+pub trait RenderOutput {
+    fn set(&mut self, y: usize, scanline: &[Pixel; 240]);
+}
+
 #[derive(Clone)]
 pub struct ScreenBuffer {
     buffer: Box<[[Pixel; 240]; 160]>,
@@ -118,10 +122,16 @@ impl Ppu {
             is_hblank: false,
             cur_line: 0,
             cur_scanline: vec![Pixel::new(0, 0, 0); 240],
-            cur_scanline_front: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
-            cur_scanline_back: vec![(Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full); 240],
+            cur_scanline_front: vec![
+                (Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full);
+                240
+            ],
+            cur_scanline_back: vec![
+                (Pixel::new(0, 0, 0), PixelType::Backdrop, WindowType::W_full);
+                240
+            ],
 
-            window_scanlines: std::array::from_fn(|_|vec![true; 240]),
+            window_scanlines: std::array::from_fn(|_| vec![true; 240]),
             active_windows: [false; 4],
             window_flags: [0; 4],
             is_windowing_active: false,

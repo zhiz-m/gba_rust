@@ -7,3 +7,5 @@
 *.svg
 perf.data
 perf.data.old
+sim_state.json
+sim/scenarios
