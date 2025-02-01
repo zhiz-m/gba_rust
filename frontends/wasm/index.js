@@ -65,26 +65,32 @@ function initDownloadSaveButton() {
 function initKeyInput() {
     // Initialize keyboard input
     window.addEventListener("keydown", (e) => {
-        handleKey(e.key, true);
+        handleKey(e.key, true, "keyboard");
         if (e.key == " " && e.target == document.body) {
             e.preventDefault();
         }
     });
-    window.addEventListener("keyup", (e) => handleKey(e.key, false));
+    window.addEventListener("keyup", (e) => handleKey(e.key, false, "keyboard"));
 }
 
 // let keyState = {}
 
-function handleKey(key, is_pressed) {
-    // console.log("handlekey");
-    // console.log(key);
+// todo: add input source disambiguation
+function handleKey(key, is_pressed, source) {
+    // console.log("handlekey", key, is_pressed);
     let num = mapKeyToNum(key);
     if (num === null) return;
     // if (keyState[key] !== null && keyState[key] === is_pressed) return;
     // if (keys && keyState[key] !== true) {
-    if (keys && keys[num] !== true) {
-        // keyState[key] = is_pressed;
-        keys[num] = is_pressed;
+
+    // keys[num] == true means that we've set it to true during this frame. attempting to unset it is 
+    // probably due to double input from both a controller and keyboard, so we ignore it.
+    if (keys) {
+        if (!keys[num] || (keys[num][0] === source || keys[num][1] !== true)) {
+            // keyState[key] = is_pressed;
+            keys[num] = [source, is_pressed];
+            // console.log(key, source, is_pressed, keys[num])
+        }
     }
 }
 
@@ -133,6 +139,7 @@ function mapGamepadButtonToKey(buttonIndex) {
 let gamepadLoop = null;
 
 function pollGamepad() {
+    const handle = (a, b) => handleKey(a, b, "controller")
     const gamepads = navigator.getGamepads();
     for (let i = 0; i < gamepads.length; i++) {
         const gamepad = gamepads[i];
@@ -141,26 +148,26 @@ function pollGamepad() {
         gamepad.buttons.forEach((button, index) => {
             const key = mapGamepadButtonToKey(index);
             if (key) {
-                handleKey(key, button.pressed);
+                handle(key, button.pressed);
             }
         });
 
         gamepad.axes.forEach((axis, index) => {
             if (index === 0) {
                 // Left stick horizontal
-                if (axis < -0.5) handleKey("ArrowLeft", true);
-                else handleKey("ArrowLeft", false);
-                if (axis > 0.5) handleKey("ArrowRight", true);
+                if (axis < -0.5) handle("ArrowLeft", true);
+                else handle("ArrowLeft", false);
+                if (axis > 0.5) handle("ArrowRight", true);
                 else {
-                    handleKey("ArrowRight", false);
+                    handle("ArrowRight", false);
                 }
             } else if (index === 1) {
                 // Left stick vertical
-                if (axis < -0.5) handleKey("ArrowUp", true);
-                else handleKey("ArrowUp", false);
-                if (axis > 0.5) handleKey("ArrowDown", true);
+                if (axis < -0.5) handle("ArrowUp", true);
+                else handle("ArrowUp", false);
+                if (axis > 0.5) handle("ArrowDown", true);
                 else {
-                    handleKey("ArrowDown", false);
+                    handle("ArrowDown", false);
                 }
             }
         });
@@ -322,7 +329,7 @@ function scheduleGba(time_micros) {
             pollGamepad();
             for (const key in keys) {
                 // console.log(`key send ${keys[i][0]} ${keys[i][1]}`);
-                gba.key_input(key, keys[key]);
+                gba.key_input(key, keys[key][1]);
             }
 
             keys = {}
