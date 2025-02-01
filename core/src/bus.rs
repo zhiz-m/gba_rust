@@ -2,7 +2,14 @@ use std::ops::{Index, IndexMut};
 
 use log::{info, warn};
 
-use crate::{algorithm, apu::Apu, config, cpu::Cpu, dma_channel::DMA_Channel, timer::Timer};
+use crate::{
+    algorithm,
+    apu::Apu,
+    config,
+    cpu::{Cpu, Flag},
+    dma_channel::DMA_Channel,
+    timer::Timer,
+};
 
 //const MEM_MAX: usize = 268435456;
 
@@ -82,6 +89,18 @@ const MEM_REGION_TOTAL: usize = 0x2084c00;
 // const MEM_REGION_TOTAL: usize = 0x1084c00;
 struct FlatMemory {
     mem: Vec<u8>,
+}
+
+impl FlatMemory {
+    #[inline(always)]
+    fn specialize(&self, region: MemoryRegion) -> &[u8] {
+        &self.mem[MEM_REGION_OFFSET[region as usize]..]
+    }
+
+    #[inline(always)]
+    fn specialize_mut(&mut self, region: MemoryRegion) -> &mut [u8] {
+        &mut self.mem[MEM_REGION_OFFSET[region as usize]..]
+    }
 }
 
 impl Default for FlatMemory {
@@ -242,28 +261,121 @@ impl Bus {
 
     // -------- public memory read/write interfaces, intended for user instructions.
 
+    // #[inline(always)]
+    // pub fn read_byte(&mut self, addr: usize) -> u8 {
+    //     let (addr, region) = self.addr_match(addr, ChunkSize::Byte, true);
+    //     self.internal_read_byte(addr, region)
+    // }
+
+    // #[inline(always)]
+    // pub fn read_halfword(&mut self, addr: usize) -> u16 {
+    //     let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
+    //     assert!(addr & 1 == 0);
+    //     self.internal_read_byte(addr, region) as u16
+    //         + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
+    // }
+
+    // #[inline(always)]
+    // pub fn read_word(&mut self, addr: usize) -> u32 {
+    //     let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
+    //     assert!(addr & 0b11 == 0);
+    //     self.internal_read_byte(addr, region) as u32
+    //         + ((self.internal_read_byte(addr + 1, region) as u32) << 8)
+    //         + ((self.internal_read_byte(addr + 2, region) as u32) << 16)
+    //         + ((self.internal_read_byte(addr + 3, region) as u32) << 24)
+    // }
+
+    #[inline(always)]
+    fn can_do_fast_internal_read(region: MemoryRegion, unsafe_bios_read: bool) -> bool {
+        match (region, unsafe_bios_read) {
+            (
+                (MemoryRegion::CartridgeSram
+                | MemoryRegion::CartridgeUpper
+                | MemoryRegion::Illegal),
+                _,
+            ) => false,
+            (MemoryRegion::Bios, false) => false,
+            _ => true,
+        }
+    }
+
     #[inline(always)]
     pub fn read_byte(&mut self, addr: usize) -> u8 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Byte, true);
-        self.internal_read_byte(addr, region)
+        match Self::can_do_fast_internal_read(region, false) {
+            false => self.internal_read_byte(addr, region),
+            true => {
+                let bytes = self.mapped_mem.specialize(region);
+                bytes[addr]
+            }
+        }
     }
 
     #[inline(always)]
     pub fn read_halfword(&mut self, addr: usize) -> u16 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
         assert!(addr & 1 == 0);
-        self.internal_read_byte(addr, region) as u16
-            + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
+        match Self::can_do_fast_internal_read(region, false) {
+            false => {
+                self.internal_read_byte(addr, region) as u16
+                    + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
+            }
+            true => {
+                let bytes = self.mapped_mem.specialize(region);
+                u16::from_le_bytes(bytes[addr..addr + 2].try_into().unwrap())
+            }
+        }
+    }
+
+    #[inline(always)]
+    pub fn read_halfword_unsafe_bios_read(&mut self, addr: usize) -> u16 {
+        let (addr, region) = self.addr_match(addr, ChunkSize::Halfword, true);
+        assert!(addr & 1 == 0);
+        match Self::can_do_fast_internal_read(region, true) {
+            false => {
+                self.internal_read_byte(addr, region) as u16
+                    + ((self.internal_read_byte(addr + 1, region) as u16) << 8)
+            }
+            true => {
+                let bytes = self.mapped_mem.specialize(region);
+                u16::from_le_bytes(bytes[addr..addr + 2].try_into().unwrap())
+            }
+        }
     }
 
     #[inline(always)]
     pub fn read_word(&mut self, addr: usize) -> u32 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
         assert!(addr & 0b11 == 0);
-        self.internal_read_byte(addr, region) as u32
-            + ((self.internal_read_byte(addr + 1, region) as u32) << 8)
-            + ((self.internal_read_byte(addr + 2, region) as u32) << 16)
-            + ((self.internal_read_byte(addr + 3, region) as u32) << 24)
+        match Self::can_do_fast_internal_read(region, false) {
+            false => {
+                self.internal_read_byte(addr, region) as u32
+                    + ((self.internal_read_byte(addr + 1, region) as u32) << 8)
+                    + ((self.internal_read_byte(addr + 2, region) as u32) << 16)
+                    + ((self.internal_read_byte(addr + 3, region) as u32) << 24)
+            }
+            true => {
+                let bytes = self.mapped_mem.specialize(region);
+                u32::from_le_bytes(bytes[addr..addr + 4].try_into().unwrap())
+            }
+        }
+    }
+
+    pub fn read_word_unsafe_bios_read(&mut self, addr: usize) -> u32 {
+        let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
+        assert!(addr & 0b11 == 0);
+        match Self::can_do_fast_internal_read(region, true) {
+            false => {
+                self.internal_read_byte(addr, region) as u32
+                    + ((self.internal_read_byte(addr + 1, region) as u32) << 8)
+                    + ((self.internal_read_byte(addr + 2, region) as u32) << 16)
+                    + ((self.internal_read_byte(addr + 3, region) as u32) << 24)
+            }
+            true => {
+                let bytes = self.mapped_mem.specialize(region);
+                u32::from_le_bytes(bytes[addr..addr + 4].try_into().unwrap())
+            }
+        }
     }
 
     #[inline(always)]
@@ -293,42 +405,55 @@ impl Bus {
     // -------- fast read/write interfaces, intended for use by system (not user instructions)
     //          note: these functions do not perform any wrapping at all.
 
+    // todo: find the cost of [specialize] and whether this can be lifted higher into callsites
+
     #[inline(always)]
     pub fn read_byte_raw(&self, addr: usize, region: MemoryRegion) -> u8 {
-        self.mapped_mem[(region as usize, addr)]
+        let bytes = self.mapped_mem.specialize(region);
+        bytes[addr]
     }
 
     #[inline(always)]
     pub fn read_halfword_raw(&self, addr: usize, region: MemoryRegion) -> u16 {
-        self.mapped_mem[(region as usize, addr)] as u16
-            + ((self.mapped_mem[(region as usize, addr + 1)] as u16) << 8)
+        let bytes = self.mapped_mem.specialize(region);
+        u16::from_le_bytes(bytes[addr..addr + 2].try_into().unwrap())
+        // self.mapped_mem[(region as usize, addr)] as u16
+        // + ((self.mapped_mem[(region as usize, addr + 1)] as u16) << 8)
     }
 
     #[inline(always)]
     pub fn read_word_raw(&self, addr: usize, region: MemoryRegion) -> u32 {
-        self.mapped_mem[(region as usize, addr)] as u32
-            + ((self.mapped_mem[(region as usize, addr + 1)] as u32) << 8)
-            + ((self.mapped_mem[(region as usize, addr + 2)] as u32) << 16)
-            + ((self.mapped_mem[(region as usize, addr + 3)] as u32) << 24)
+        let bytes = self.mapped_mem.specialize(region);
+        u32::from_le_bytes(bytes[addr..addr + 4].try_into().unwrap())
+        // self.mapped_mem[(region as usize, addr)] as u32
+        //     + ((self.mapped_mem[(region as usize, addr + 1)] as u32) << 8)
+        //     + ((self.mapped_mem[(region as usize, addr + 2)] as u32) << 16)
+        //     + ((self.mapped_mem[(region as usize, addr + 3)] as u32) << 24)
     }
 
     #[inline(always)]
     pub fn store_byte_raw(&mut self, addr: usize, region: MemoryRegion, val: u8) {
-        self.mapped_mem[(region as usize, addr)] = val;
+        let bytes = self.mapped_mem.specialize_mut(region);
+        bytes[addr] = val
+        // self.mapped_mem[(region as usize, addr)] = val;
     }
 
     #[inline(always)]
     pub fn store_halfword_raw(&mut self, addr: usize, region: MemoryRegion, val: u16) {
-        self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
-        self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
+        let bytes = self.mapped_mem.specialize_mut(region);
+        bytes[addr..addr + 2].copy_from_slice(&val.to_le_bytes());
+        // self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
+        // self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
     }
 
     #[inline(always)]
     pub fn store_word_raw(&mut self, addr: usize, region: MemoryRegion, val: u32) {
-        self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
-        self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
-        self.mapped_mem[(region as usize, addr + 2)] = ((val >> 16) & 0b11111111) as u8;
-        self.mapped_mem[(region as usize, addr + 3)] = ((val >> 24) & 0b11111111) as u8;
+        let bytes = self.mapped_mem.specialize_mut(region);
+        bytes[addr..addr + 4].copy_from_slice(&val.to_le_bytes());
+        // self.mapped_mem[(region as usize, addr)] = (val & 0b11111111) as u8;
+        // self.mapped_mem[(region as usize, addr + 1)] = ((val >> 8) & 0b11111111) as u8;
+        // self.mapped_mem[(region as usize, addr + 2)] = ((val >> 16) & 0b11111111) as u8;
+        // self.mapped_mem[(region as usize, addr + 3)] = ((val >> 24) & 0b11111111) as u8;
     }
 
     // -------- miscellaneous public methods to communicate with other components of GBA system
@@ -488,9 +613,9 @@ impl Bus {
                 }
             }
             MemoryRegion::Bios => {
-                let offset = (addr & 0b11) << 3;
                 //let range = 0b11111111 << (offset);
                 if self.cpu.actual_pc >= 0x4000 {
+                    let offset = (addr & 0b11) << 3;
                     warn!(
                         "attempt for CPU to read BIOS from outside, {} {:#x}",
                         offset, self.cpu.last_fetched_bios_instr
@@ -517,7 +642,17 @@ impl Bus {
             }
             MemoryRegion::Illegal => {
                 let range = (addr & 0b11) << 3;
-                (self.cpu.pipeline_instr.get(1).unwrap() >> range) as u8
+                // (self.cpu.pipeline_instr.get(1).unwrap() >> range) as u8
+
+                // todo: this is terrible and poorly abstracted. should also check if this actually works
+                let data = match self.cpu.read_flag(Flag::T) {
+                    true => {
+                        let data = self.read_halfword(self.cpu.actual_pc as usize + 2) as u32;
+                        data + (data << 16)
+                    }
+                    false => self.read_word(self.cpu.actual_pc as usize + 4),
+                };
+                (data >> range) as u8
             }
             _ => self.mapped_mem[(region as usize, addr)],
         }

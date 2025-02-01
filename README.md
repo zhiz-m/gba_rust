@@ -38,6 +38,14 @@ Eg, to run a game on my local setup:
 #### Audio processing unit
 - http://belogic.com/gba/
 
+## NDS
+- https://shonumi.github.io/articles/art3.html
+- https://shonumi.github.io/articles/art4.html
+- https://shonumi.github.io/articles/art12.html
+- https://www.copetti.org/writings/consoles/nintendo-ds/
+- https://shonumi.github.io/articles/art34.html
+
+
 ### Test roms
 - https://github.com/jsmolka/gba-tests/tree/3fc2dc019f91180585c7f71d1d68c271baa331fe
 - https://github.com/shonumi/Emu-Docs/tree/master/GameBoy%20Advance/test_roms/arm_wrestler

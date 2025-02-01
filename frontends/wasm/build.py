@@ -60,6 +60,8 @@ print("now: wasm-opt pass")
 subprocess.run(
     [
         "wasm-opt",
+        "--enable-bulk-memory",
+        "--enable-reference-types",
         os.path.join(root_dir, "pkg", "gba_rust_wasm_bg.wasm"),
         "-O4",
         "-o",

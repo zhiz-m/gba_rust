@@ -82,8 +82,7 @@ pub struct Cpu {
     operand2: u32,
     reg_dest: u32,
     pub actual_pc: u32,
-    pub pipeline_instr: VecDeque<u32>,
-
+    // pub pipeline_instr: VecDeque<u32>,
     op_mode: OperatingMode,
 
     reg_map: [[Register; 16]; 7],
@@ -127,8 +126,7 @@ impl Cpu {
             //actual_pc: 0x08000000,
             //actual_pc: 0x080002f0,
             actual_pc: 0,
-            pipeline_instr: VecDeque::<u32>::with_capacity(3),
-
+            // pipeline_instr: VecDeque::<u32>::with_capacity(3),
             op_mode: OperatingMode::Sys,
 
             reg_map: [
@@ -325,15 +323,17 @@ impl Cpu {
 
     #[inline(always)]
     fn fetch_arm_instr(&mut self, bus: &mut Bus) {
-        if self.pipeline_instr.is_empty() {
-            self.pipeline_instr
-                .push_back(bus.read_word(self.actual_pc as usize));
-            self.pipeline_instr
-                .push_back(bus.read_word(self.actual_pc as usize + 4));
-        }
-        self.pipeline_instr
-            .push_back(bus.read_word(self.actual_pc as usize + 8));
-        self.instr = self.pipeline_instr.pop_front().unwrap();
+        // if self.pipeline_instr.is_empty() {
+        //     self.pipeline_instr
+        //         .push_back(bus.read_word(self.actual_pc as usize));
+        //     self.pipeline_instr
+        //         .push_back(bus.read_word(self.actual_pc as usize + 4));
+        // }
+        // self.pipeline_instr
+        //     .push_back(bus.read_word(self.actual_pc as usize + 8));
+        // self.instr = self.pipeline_instr.pop_front().unwrap();
+        self.instr = bus.read_word_unsafe_bios_read(self.actual_pc as usize);
+
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
                 bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::Bios) as u32;
@@ -481,7 +481,7 @@ impl Cpu {
             offset |= 0b111111 << 26;
         }
         self.actual_pc = (Wrapping(self.read_pc()) + Wrapping(offset)).0;
-        self.pipeline_instr.clear();
+        // self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
@@ -494,7 +494,7 @@ impl Cpu {
             self.set_flag(Flag::T, true);
         };
         self.actual_pc = (addr >> 1) << 1;
-        self.pipeline_instr.clear();
+        // self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
@@ -838,7 +838,7 @@ impl Cpu {
     fn _op_set_pc(&mut self, res: u32) {
         if self.reg_dest == Register::R15 as u32 {
             self.actual_pc = res;
-            self.pipeline_instr.clear();
+            // self.pipeline_instr.clear();
             self.increment_pc = false;
             if self.dataproc_set_cond() {
                 if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
@@ -1104,7 +1104,7 @@ impl Cpu {
                     res &= 0xfffffffc;
                     self.actual_pc = res;
                     // NOTE: may not be correct, maybe comment out
-                    self.pipeline_instr.clear();
+                    // self.pipeline_instr.clear();
                     self.increment_pc = false;
                     cycles += 2;
                 }
@@ -1296,7 +1296,7 @@ impl Cpu {
                         self.reg[reg as usize] &= 0xfffffffc;
                         // NOTE: may not be correct, maybe comment out
                         self.actual_pc = self.reg[reg as usize];
-                        self.pipeline_instr.clear();
+                        // self.pipeline_instr.clear();
                         self.increment_pc = false;
                     }
                 } else {
@@ -1580,15 +1580,16 @@ impl Cpu {
 
     #[inline(always)]
     fn fetch_thumb_instr(&mut self, bus: &mut Bus) {
-        if self.pipeline_instr.is_empty() {
-            let data = bus.read_halfword(self.actual_pc as usize) as u32;
-            self.pipeline_instr.push_back(data + (data << 16));
-            let data = bus.read_halfword(self.actual_pc as usize + 2) as u32;
-            self.pipeline_instr.push_back(data + (data << 16));
-        }
-        let data = bus.read_halfword(self.actual_pc as usize + 4) as u32;
-        self.pipeline_instr.push_back(data + (data << 16));
-        self.instr = self.pipeline_instr.pop_front().unwrap() as u16 as u32;
+        // if self.pipeline_instr.is_empty() {
+        //     let data = bus.read_halfword(self.actual_pc as usize) as u32;
+        //     self.pipeline_instr.push_back(data + (data << 16));
+        //     let data = bus.read_halfword(self.actual_pc as usize + 2) as u32;
+        //     self.pipeline_instr.push_back(data + (data << 16));
+        // }
+        // let data = bus.read_halfword(self.actual_pc as usize + 4) as u32;
+        // self.pipeline_instr.push_back(data + (data << 16));
+        // self.instr = self.pipeline_instr.pop_front().unwrap() as u16 as u32;
+        self.instr = bus.read_halfword_unsafe_bios_read(self.actual_pc as usize) as u32;
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
                 bus.read_word_raw(self.actual_pc as usize + 4, MemoryRegion::Bios) as u32;
@@ -2032,7 +2033,7 @@ impl Cpu {
                 }
                 self.actual_pc = (self.operand2 >> 1) << 1;
                 //print!(" bx from thumb");
-                self.pipeline_instr.clear();
+                // self.pipeline_instr.clear();
                 self.increment_pc = false;
                 3
             }
@@ -2330,7 +2331,7 @@ impl Cpu {
             if L {
                 let res = bus.read_word(addr);
                 self.actual_pc = res & 0xfffffffe;
-                self.pipeline_instr.clear();
+                // self.pipeline_instr.clear();
                 self.increment_pc = false;
             } else {
                 let res = self.read_reg(14);
@@ -2412,7 +2413,7 @@ impl Cpu {
             }
             let res = Wrapping(self.actual_pc + 4) + Wrapping(offset);
             self.actual_pc = res.0;
-            self.pipeline_instr.clear();
+            // self.pipeline_instr.clear();
             self.increment_pc = false;
             3
         } else {
@@ -2432,7 +2433,7 @@ impl Cpu {
         let res = Wrapping(self.reg[Register::R15 as usize]) + Wrapping(offset);
         self.actual_pc = res.0;
         //print!(" actual_pc: {:#x}", self.actual_pc);
-        self.pipeline_instr.clear();
+        // self.pipeline_instr.clear();
         self.increment_pc = false;
         3
     }
@@ -2458,7 +2459,7 @@ impl Cpu {
                 //print!(" value placed into R15: {:#010x}", offset);
                 self.set_reg(14, (self.actual_pc + 2) | 1);
                 self.actual_pc = offset.0;
-                self.pipeline_instr.clear();
+                // self.pipeline_instr.clear();
                 self.increment_pc = false;
             }
         };
@@ -2496,7 +2497,7 @@ impl Cpu {
         let mut cpsr = self.reg[Register::Cpsr as usize];
         self.reg[Register::SPSR_irq as usize] = cpsr;
         self.actual_pc = 0x18;
-        self.pipeline_instr.clear();
+        // self.pipeline_instr.clear();
         self.increment_pc = false;
 
         // switch to arm
@@ -2524,7 +2525,7 @@ impl Cpu {
         let mut cpsr = self.reg[Register::Cpsr as usize];
         self.reg[Register::SPSR_svc as usize] = cpsr;
         self.actual_pc = 0x8;
-        self.pipeline_instr.clear();
+        // self.pipeline_instr.clear();
         self.increment_pc = false;
 
         // switch to arm
