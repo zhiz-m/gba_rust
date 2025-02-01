@@ -34,10 +34,10 @@ pub const SAVE_STATE_SIZE: usize = 128 * 1024 * NUM_SAVE_STATES;
 // number of frames to pass before rendering in speedup mode
 pub const FRAME_RENDER_INTERVAL_SPEEDUP: u32 = 8;
 
-pub const TIMER_CLOCK_INTERVAL_POW2: u32 = 7;
+const TIMER_CLOCK_INTERVAL_POW2: u32 = 7;
 pub const TIMER_CLOCK_INTERVAL_CLOCKS: u32 = 1 << TIMER_CLOCK_INTERVAL_POW2;
-pub const DMA_CHECK_INTERVAL_POW2: u64 = 4;
-pub const DMA_CHECK_INTERVAL: u64 = 1 << DMA_CHECK_INTERVAL_POW2;
+const DMA_CHECK_INTERVAL_POW2: u32 = 3;
+pub const DMA_CHECK_INTERVAL_CLOCKS: u32 = 1 << DMA_CHECK_INTERVAL_POW2;
 
 /*#[cfg(feature="fast_cpu")]
 // WARNING: UNSTABLE

@@ -1,7 +1,10 @@
-use crate::{bus::Bus, config};
+use crate::{
+    bus::{Bus, MemoryRegion},
+    config,
+};
 
 pub struct Timer {
-    timer_no: usize,
+    timer_no: u8,
     pub timer_count: u16,
     cur_cycle: u16,
     period: u16,
@@ -14,7 +17,7 @@ pub struct Timer {
 }
 
 impl Timer {
-    pub fn new(timer_no: usize) -> Timer {
+    pub fn new(timer_no: u8) -> Timer {
         Timer {
             timer_no,
             timer_count: 0,
@@ -43,11 +46,18 @@ impl Timer {
         //info!("timer: {}, period: {}", self.timer_no, self.period);
     }
 
+    pub fn sync_registers_to_bus(&self, bus: &mut Bus) {
+        let addr = 0x100 + ((self.timer_no as usize) << 2);
+        bus.store_byte_raw(addr, MemoryRegion::IO, self.timer_count as u8);
+        bus.store_byte_raw(addr + 1, MemoryRegion::IO, (self.timer_count >> 8) as u8);
+    }
+
     #[inline(always)]
-    pub fn set_is_enabled(&mut self, enable: bool) {
+    pub fn set_is_enabled(&mut self, bus: &mut Bus, enable: bool) {
         //info!("timer_no: {}, enabled: {}", self.timer_no, enable);
         if enable && !self.is_enabled {
             self.timer_count = self.reload_val;
+            self.sync_registers_to_bus(bus);
         } else if !enable && self.is_enabled {
         }
         self.is_enabled = enable;
@@ -64,6 +74,7 @@ impl Timer {
             let timer_count_old = self.timer_count;
             self.timer_count += self.cur_cycle >> self.period_pow;
             self.cur_cycle &= self.period - 1;
+            self.sync_registers_to_bus(bus);
 
             // overflow
             if self.timer_count < timer_count_old {
@@ -76,7 +87,7 @@ impl Timer {
                         continue;
                     }*/
                     if let Some(timer_no) = bus.apu.direct_sound_timer[i] {
-                        if timer_no == self.timer_no {
+                        if timer_no == self.timer_no as usize {
                             //bus.apu.direct_sound_fifo_cur[0] = *bus.apu.direct_sound_fifo[0].front().unwrap();
                             if let Some(val) = bus.apu.direct_sound_fifo[i].pop_front() {
                                 bus.apu.direct_sound_fifo_cur[i] = val;
@@ -95,6 +106,7 @@ impl Timer {
                     }
                 }*/
                 self.timer_count += self.reload_val;
+                self.sync_registers_to_bus(bus);
                 if self.raise_interrupt {
                     bus.cpu_interrupt(1 << (3 + self.timer_no));
                 }

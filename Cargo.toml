@@ -21,6 +21,8 @@ opt-level = 3
 
 [profile.release-symbols]
 inherits = "release"
+lto = false
+opt-level = 3
 debug = true
 
 [profile.release-lto]

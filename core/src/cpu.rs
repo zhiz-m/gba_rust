@@ -8,11 +8,7 @@ use crate::{
     config,
     dma_channel::DMA_Channel,
 };
-use std::{
-    cmp::min,
-    collections::{HashMap, VecDeque},
-    num::Wrapping,
-};
+use std::{cmp::min, collections::VecDeque, num::Wrapping};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register {
@@ -55,7 +51,7 @@ enum Register {
     SPSR_und,
 }
 
-#[derive(Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 enum OperatingMode {
     Usr = 0,
     Fiq = 1,
@@ -91,7 +87,7 @@ pub struct Cpu {
     op_mode: OperatingMode,
 
     reg_map: [[Register; 16]; 7],
-    spsr_map: HashMap<OperatingMode, Register>,
+    spsr_map: [Option<Register>; 7],
 
     increment_pc: bool,
     thumb_modify_flags: bool,
@@ -105,11 +101,21 @@ pub struct Cpu {
     bios_end: bool,
 
     pub last_fetched_bios_instr: u32,
-    dma_check_counter: u64,
+    dma_check_counter: u32,
 }
 
 impl Cpu {
     pub fn new() -> Cpu {
+        let mut spsr_map = [None; 7];
+        for (mode, register) in [
+            (OperatingMode::Fiq, Register::SPSR_fiq),
+            (OperatingMode::Svc, Register::SPSR_svc),
+            (OperatingMode::Abt, Register::SPSR_abt),
+            (OperatingMode::Irq, Register::SPSR_irq),
+            (OperatingMode::Und, Register::SPSR_und),
+        ] {
+            spsr_map[mode as usize] = Some(register)
+        }
         let mut res = Cpu {
             //arm_instr_table: Cpu::generate_arm_decode_table(),
             reg: [0; 37],
@@ -253,13 +259,7 @@ impl Cpu {
                     Register::R15,
                 ],
             ],
-            spsr_map: HashMap::from([
-                (OperatingMode::Fiq, Register::SPSR_fiq),
-                (OperatingMode::Svc, Register::SPSR_svc),
-                (OperatingMode::Abt, Register::SPSR_abt),
-                (OperatingMode::Irq, Register::SPSR_irq),
-                (OperatingMode::Und, Register::SPSR_und),
-            ]),
+            spsr_map,
 
             increment_pc: true,
             thumb_modify_flags: true,
@@ -616,7 +616,7 @@ impl Cpu {
             );
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+            if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
                 let spsr = self.reg[*reg as usize];
                 self.set_cpsr(spsr);
             }
@@ -641,7 +641,7 @@ impl Cpu {
             );
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+            if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
                 let spsr = self.reg[*reg as usize];
                 self.set_cpsr(spsr);
             }
@@ -809,7 +809,7 @@ impl Cpu {
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+            if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
                 let spsr = self.reg[*reg as usize];
                 self.set_cpsr(spsr);
             }
@@ -826,7 +826,7 @@ impl Cpu {
             self.set_flag(Flag::C, self.shifter_carry > 0);
         }
         if self.reg_dest == 0b1111 {
-            if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+            if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
                 let spsr = self.reg[*reg as usize];
                 self.set_cpsr(spsr);
             }
@@ -841,7 +841,7 @@ impl Cpu {
             self.pipeline_instr.clear();
             self.increment_pc = false;
             if self.dataproc_set_cond() {
-                if let Some(reg) = self.spsr_map.get(&self.op_mode) {
+                if let Some(reg) = self.spsr_map.get(self.op_mode as usize).unwrap() {
                     let spsr = self.reg[*reg as usize];
                     self.set_cpsr(spsr);
                 } else {
@@ -857,8 +857,8 @@ impl Cpu {
         let reg = if (self.instr >> 22 & 1) == 0 {
             Register::Cpsr
         } else {
-            match self.spsr_map.get(&self.op_mode) {
-                Some(&opmode) => opmode,
+            match self.spsr_map[self.op_mode as usize] {
+                Some(opmode) => opmode,
                 None => Register::Cpsr,
             }
         };
@@ -884,8 +884,8 @@ impl Cpu {
             Register::Cpsr
         } else {
             //info!("{} {:#034b}", self.op_mode as u32, self.reg[Register::CPSR as usize]);
-            match self.spsr_map.get(&self.op_mode) {
-                Some(&opmode) => opmode,
+            match self.spsr_map[self.op_mode as usize] {
+                Some(opmode) => opmode,
                 None => {
                     warn!(
                         "msr called on R=1, but this mode has no SPSR {}",
@@ -1316,7 +1316,10 @@ impl Cpu {
         }
 
         if S && r15_appear && L {
-            self.set_cpsr(self.reg[self.spsr_map[&self.op_mode] as usize]);
+            // todo: check
+            if let Some(reg) = self.spsr_map[self.op_mode as usize] {
+                self.set_cpsr(self.reg[reg as usize]);
+            }
         }
 
         if L {
@@ -2543,7 +2546,7 @@ impl Cpu {
     #[inline(always)]
     pub fn check_dma(&mut self, bus: &Bus) -> bool {
         self.dma_check_counter += 1;
-        self.dma_check_counter & config::DMA_CHECK_INTERVAL == 0
+        (self.halt || (self.dma_check_counter & (config::DMA_CHECK_INTERVAL_CLOCKS - 1) == 0))
             && bus.is_any_dma_active
             && bus.dma_channels.iter().any(|x| x.check_is_active(bus))
     }

@@ -18,6 +18,8 @@ root_dir = os.path.dirname(__file__)
 #     {"RUSTFLAGS": "-C target-feature=+bulk-memory,+mutable-globals"}
 # )
 
+print("now: rustc compilation")
+
 subprocess.run(
     [
         "cargo",
@@ -28,6 +30,8 @@ subprocess.run(
     ],
     cwd=root_dir,
 ).check_returncode()
+
+print("now: wasm-bindgen pass")
 
 # Note the usage of `--target no-modules` here which is required for passing
 # the memory import to each Wasm module.
@@ -47,6 +51,19 @@ subprocess.run(
         os.path.join(root_dir, "pkg"),
         "--target",
         "no-modules",
+    ],
+    cwd=root_dir,
+).check_returncode()
+
+print("now: wasm-opt pass")
+
+subprocess.run(
+    [
+        "wasm-opt",
+        os.path.join(root_dir, "pkg", "gba_rust_wasm_bg.wasm"),
+        "-O4",
+        "-o",
+        os.path.join(root_dir, "pkg", "gba_rust_wasm_bg.wasm"),
     ],
     cwd=root_dir,
 ).check_returncode()

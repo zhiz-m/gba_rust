@@ -63,6 +63,7 @@ function initDownloadSaveButton() {
 }
 
 function initKeyInput() {
+    // Initialize keyboard input
     window.addEventListener("keydown", (e) => {
         handleKey(e.key, true);
         if (e.key == " " && e.target == document.body) {
@@ -72,30 +73,135 @@ function initKeyInput() {
     window.addEventListener("keyup", (e) => handleKey(e.key, false));
 }
 
+// let keyState = {}
+
 function handleKey(key, is_pressed) {
-    let num = null;
-    if (key == "z") num = 0;
-    else if (key == "x") num = 1;
-    else if (key == "q") num = 2;
-    else if (key == "w") num = 3;
-    else if (key == "ArrowRight") num = 4;
-    else if (key == "ArrowLeft") num = 5;
-    else if (key == "ArrowUp") num = 6;
-    else if (key == "ArrowDown") num = 7;
-    else if (key == "s") num = 8;
-    else if (key == "a") num = 9;
-    else if (key == " ") num = 10;
-    else if (key == "1") num = 11;
-    else if (key == "2") num = 12;
-    else if (key == "3") num = 13;
-    else if (key == "4") num = 14;
-    else if (key == "5") num = 15;
-    else return;
-
-    // console.log(`key press: ${key}, ${num}, ${is_pressed}`);
-
-    if (keys) keys.push([num, is_pressed]);
+    // console.log("handlekey");
+    // console.log(key);
+    let num = mapKeyToNum(key);
+    if (num === null) return;
+    // if (keyState[key] !== null && keyState[key] === is_pressed) return;
+    // if (keys && keyState[key] !== true) {
+    if (keys && keys[num] !== true) {
+        // keyState[key] = is_pressed;
+        keys[num] = is_pressed;
+    }
 }
+
+function mapKeyToNum(key) {
+    if (key == "z") return 0;
+    if (key == "x") return 1;
+    if (key == "q") return 2;
+    if (key == "w") return 3;
+    if (key == "ArrowRight") return 4;
+    if (key == "ArrowLeft") return 5;
+    if (key == "ArrowUp") return 6;
+    if (key == "ArrowDown") return 7;
+    if (key == "s") return 8;
+    if (key == "a") return 9;
+    if (key == " ") return 10;
+    if (key == "1") return 11;
+    if (key == "2") return 12;
+    if (key == "3") return 13;
+    if (key == "4") return 14;
+    if (key == "5") return 15;
+    return null;
+}
+
+
+// Map gamepad buttons to key equivalents
+function mapGamepadButtonToKey(buttonIndex) {
+    const mapping = {
+        0: "z",        // Cross
+        1: "x",        // Circle
+        2: "q",        // Square
+        3: "w",        // Triangle
+        14: "ArrowLeft", // D-pad Left
+        15: "ArrowRight", // D-pad Right
+        12: "ArrowUp", // D-pad Up
+        13: "ArrowDown", // D-pad Down
+        6: " ",        // L2
+        4: "a",        // L1
+        7: " ",        // R2
+        5: "s",        // R1
+        8: "w",        // Share
+        9: "q",        // Options
+    };
+    return mapping[buttonIndex] || null;
+}
+
+let gamepadLoop = null;
+
+function pollGamepad() {
+    const gamepads = navigator.getGamepads();
+    for (let i = 0; i < gamepads.length; i++) {
+        const gamepad = gamepads[i];
+        if (!gamepad) continue;
+
+        gamepad.buttons.forEach((button, index) => {
+            const key = mapGamepadButtonToKey(index);
+            if (key) {
+                handleKey(key, button.pressed);
+            }
+        });
+
+        gamepad.axes.forEach((axis, index) => {
+            if (index === 0) {
+                // Left stick horizontal
+                if (axis < -0.5) handleKey("ArrowLeft", true);
+                else handleKey("ArrowLeft", false);
+                if (axis > 0.5) handleKey("ArrowRight", true);
+                else {
+                    handleKey("ArrowRight", false);
+                }
+            } else if (index === 1) {
+                // Left stick vertical
+                if (axis < -0.5) handleKey("ArrowUp", true);
+                else handleKey("ArrowUp", false);
+                if (axis > 0.5) handleKey("ArrowDown", true);
+                else {
+                    handleKey("ArrowDown", false);
+                }
+            }
+        });
+    }
+}
+
+// Initialize the input handlers
+// function initKeyInput() {
+//     window.addEventListener("keydown", (e) => {
+//         handleKey(e.key, true);
+//         if (e.key == " " && e.target == document.body) {
+//             e.preventDefault();
+//         }
+//     });
+//     window.addEventListener("keyup", (e) => handleKey(e.key, false));
+// }
+
+// function handleKey(key, is_pressed) {
+//     let num = null;
+//     if (key == "z") num = 0;
+//     else if (key == "x") num = 1;
+//     else if (key == "q") num = 2;
+//     else if (key == "w") num = 3;
+//     else if (key == "ArrowRight") num = 4;
+//     else if (key == "ArrowLeft") num = 5;
+//     else if (key == "ArrowUp") num = 6;
+//     else if (key == "ArrowDown") num = 7;
+//     else if (key == "s") num = 8;
+//     else if (key == "a") num = 9;
+//     else if (key == " ") num = 10;
+//     else if (key == "1") num = 11;
+//     else if (key == "2") num = 12;
+//     else if (key == "3") num = 13;
+//     else if (key == "4") num = 14;
+//     else if (key == "5") num = 15;
+//     else return;
+
+//     // console.log(`key press: ${key}, ${num}, ${is_pressed}`);
+
+//     if (keys) keys.push([num, is_pressed]);
+// }
 
 function modifyFpsLabel(fps) {
     if (fps != null) fps_label.innerHTML = `FPS: ${fps}`
@@ -198,7 +304,7 @@ function scheduleGba(time_micros) {
                 audio_offset = audio_ctx.currentTime + 0.05;
                 gba.init(time);
                 has_init = true;
-                keys = []
+                keys = {}
             }
             let micros = gba.process_frame(time);
 
@@ -213,12 +319,13 @@ function scheduleGba(time_micros) {
 
             gba.input_frame_preprocess();
 
-            for (let i = 0; i < keys.length; i++) {
+            pollGamepad();
+            for (const key in keys) {
                 // console.log(`key send ${keys[i][0]} ${keys[i][1]}`);
-                gba.key_input(keys[i][0], keys[i][1]);
+                gba.key_input(key, keys[key]);
             }
 
-            keys = []
+            keys = {}
 
             scheduleGba(micros);
         }
