@@ -86,7 +86,7 @@ function handleKey(key, is_pressed, source) {
     // keys[num] == true means that we've set it to true during this frame. attempting to unset it is 
     // probably due to double input from both a controller and keyboard, so we ignore it.
     if (keys) {
-        if (!keys[num] || (keys[num][0] === source || keys[num][1] !== true)) {
+        if (!keys[num] || (keys[num][0] === "keyboard" || keys[num][1] !== true)) {
             // keyState[key] = is_pressed;
             keys[num] = [source, is_pressed];
             // console.log(key, source, is_pressed, keys[num])
@@ -122,6 +122,7 @@ function mapGamepadButtonToKey(buttonIndex) {
         1: "x",        // Circle
         2: "q",        // Square
         3: "w",        // Triangle
+        // todo: fix d pad
         14: "ArrowLeft", // D-pad Left
         15: "ArrowRight", // D-pad Right
         12: "ArrowUp", // D-pad Up
