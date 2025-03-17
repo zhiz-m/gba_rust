@@ -61,7 +61,7 @@ impl GbaWasm {
                 }
             }
             let data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
-                Clamped(&mut self.raw_screen_buffer[..]),
+                Clamped(&self.raw_screen_buffer[..]),
                 480,
                 320,
             )?;

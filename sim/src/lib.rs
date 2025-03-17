@@ -97,9 +97,9 @@ impl StateLogger {
 
 pub mod sim {
     use core::str;
+    use std::env;
     use std::fs::{read, write};
     use std::time::{Duration, SystemTime};
-    use std::{env, u64};
 
     use gba_core::ScreenBuffer;
 
@@ -109,11 +109,16 @@ pub mod sim {
         items.sort();
         let len = items.len() as f64;
         let of = |mult| (len * mult) as usize;
-        let buckets = [("min", 1),
+        let buckets = [
+            ("min", 1),
             ("25%", of(0.25)),
             ("50%", of(0.5)),
             ("75%", of(0.75)),
-            ("max", items.len() - 1)];
+            ("90%", of(0.9)),
+            ("99%", of(0.99)),
+            ("99.9%", of(0.999)),
+            ("max", items.len() - 1),
+        ];
         buckets.iter().for_each(|(str, _)| print!("|{: >12}", str));
         println!("|");
         buckets.iter().for_each(|(_, ind)| {
@@ -169,8 +174,7 @@ pub mod sim {
 
         while let Some(frame_info) = state.frame_info.pop_front() {
             if gba.total_frames_passed() != frame_info.frame {
-                println!("{} {}", gba.total_frames_passed(), frame_info.frame);
-                assert!(false);
+                panic!("{} {}", gba.total_frames_passed(), frame_info.frame);
             }
             let _sleep_micros: u64 = gba.process_frame(frame_info.current_time).unwrap();
             let next_time = SystemTime::now();

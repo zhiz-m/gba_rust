@@ -89,15 +89,15 @@ fn main() {
         .ok();
 
     // screen buffer
-    let (tx1, rx1) = mpsc::channel();
+    let (tx1, _rx1) = mpsc::channel();
 
-    let (tx2, rx2) = mpsc::channel();
+    let (_tx2, rx2) = mpsc::channel();
 
     // audio
-    let (tx3, rx3) = mpsc::channel();
+    let (tx3, _rx3) = mpsc::channel();
 
     // fps
-    let (tx4, rx4) = mpsc::channel();
+    let (tx4, _rx4) = mpsc::channel();
 
     let mut gba = gba_core::GBA::new(
         &bios_bin,
@@ -131,7 +131,7 @@ fn main() {
         if current_time - start_time > 10_000_000{
             break;
         }
-        let sleep_micros = gba
+        let _sleep_micros = gba
             .process_frame(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
