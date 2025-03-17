@@ -23,9 +23,9 @@ impl<'de> Deserialize<'de> for KeyInputSerde {
     }
 }
 
-impl Into<KeyInput> for KeyInputSerde {
-    fn into(self) -> KeyInput {
-        self.0
+impl From<KeyInputSerde> for KeyInput {
+    fn from(val: KeyInputSerde) -> Self {
+        val.0
     }
 }
 
@@ -109,13 +109,11 @@ pub mod sim {
         items.sort();
         let len = items.len() as f64;
         let of = |mult| (len * mult) as usize;
-        let buckets = vec![
-            ("min", 1),
+        let buckets = [("min", 1),
             ("25%", of(0.25)),
             ("50%", of(0.5)),
             ("75%", of(0.75)),
-            ("max", items.len() - 1),
-        ];
+            ("max", items.len() - 1)];
         buckets.iter().for_each(|(str, _)| print!("|{: >12}", str));
         println!("|");
         buckets.iter().for_each(|(_, ind)| {
@@ -144,7 +142,7 @@ pub mod sim {
         for y in 0..height {
             for x in 0..width {
                 let pixel = screen_buffer.read_pixel(y as usize, x as usize).to_u8();
-                img.put_pixel(x as u32, y as u32, Rgb([pixel.0, pixel.1, pixel.2]))
+                img.put_pixel(x, y, Rgb([pixel.0, pixel.1, pixel.2]))
             }
         }
         img

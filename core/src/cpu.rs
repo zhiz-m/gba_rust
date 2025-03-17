@@ -8,7 +8,7 @@ use crate::{
     config,
     dma_channel::DMA_Channel,
 };
-use std::{cmp::min, collections::VecDeque, num::Wrapping};
+use std::{cmp::min, num::Wrapping};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Register {
@@ -336,7 +336,7 @@ impl Cpu {
 
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
-                bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::Bios) as u32;
+                bus.read_word_raw(self.actual_pc as usize + 8, MemoryRegion::Bios);
         }
     }
 
@@ -1592,7 +1592,7 @@ impl Cpu {
         self.instr = bus.read_halfword_unsafe_bios_read(self.actual_pc as usize) as u32;
         if self.actual_pc < 0x4000 {
             self.last_fetched_bios_instr =
-                bus.read_word_raw(self.actual_pc as usize + 4, MemoryRegion::Bios) as u32;
+                bus.read_word_raw(self.actual_pc as usize + 4, MemoryRegion::Bios);
         }
     }
 

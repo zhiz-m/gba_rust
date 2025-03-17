@@ -410,7 +410,7 @@ impl Ppu {
 
         for i in 0..240 {
             self.update_cur_scanline_bg(
-                i as usize,
+                i,
                 Ppu::process_palette_colour(
                     bus.read_byte_raw(addr + i, MemoryRegion::Vram),
                     false,
@@ -655,8 +655,8 @@ impl Ppu {
                     //let j = j - x;
                     let cx = (Wrapping(j) - Wrapping(affine_w >> 1)).0;
                     let cy = (Wrapping(i) - Wrapping(affine_h >> 1)).0;
-                    ox = ((pa * cx + pb * cy) as i16 >> 8) as u16 + (w as u16 >> 1);
-                    oy = ((pc * cx + pd * cy) as i16 >> 8) as u16 + (h as u16 >> 1);
+                    ox = ((pa * cx + pb * cy) as i16 >> 8) as u16 + (w >> 1);
+                    oy = ((pc * cx + pd * cy) as i16 >> 8) as u16 + (h >> 1);
 
                     read_pixel = ox < w && oy < h;
                 };

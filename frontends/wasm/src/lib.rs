@@ -39,7 +39,7 @@ impl GbaWasm {
         let micros = self
             .gba
             .process_frame(current_time)
-            .map_err(|e| Into::<JsValue>::into(e))?;
+            .map_err(Into::<JsValue>::into)?;
 
         Ok(micros)
     }

@@ -49,9 +49,9 @@ impl TryFrom<u8> for KeyInput {
     }
 }
 
-impl Into<u8> for KeyInput {
-    fn into(self) -> u8 {
-        self as u8
+impl From<KeyInput> for u8 {
+    fn from(val: KeyInput) -> Self {
+        val as u8
     }
 }
 

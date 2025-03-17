@@ -7,8 +7,7 @@ use std::{
     env,
     fs::{self, read},
     path::Path,
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH}, sync::mpsc,
+    time::{SystemTime, UNIX_EPOCH}, sync::mpsc,
 };
 
 use crate::logger::init_logger;

@@ -119,7 +119,7 @@ impl DMA_Channel {
                             3 => {
                                 bus.hblank_dma && {
                                     let vcount = bus.read_byte_raw(0x5, MemoryRegion::IO);
-                                    vcount >= 2 && vcount < 162
+                                    (2..162).contains(&vcount)
                                 }
                             }
                             _ => unreachable!(),
@@ -292,9 +292,9 @@ impl DMA_Channel {
                     let mut j = 0;
                     let base_addr = bus.eeprom_read_offset;
                     //println!("read base addr: {:#x}", base_addr);
-                    let res = bus.read_word_raw(base_addr as usize, MemoryRegion::CartridgeSram)
+                    let res = bus.read_word_raw(base_addr, MemoryRegion::CartridgeSram)
                         as u64
-                        + ((bus.read_word_raw(base_addr as usize + 4, MemoryRegion::CartridgeSram)
+                        + ((bus.read_word_raw(base_addr + 4, MemoryRegion::CartridgeSram)
                             as u64)
                             << 32);
                     //println!("read res: {:#18x}", res);

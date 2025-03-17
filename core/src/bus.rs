@@ -289,9 +289,7 @@ impl Bus {
     fn can_do_fast_internal_read(region: MemoryRegion, unsafe_bios_read: bool) -> bool {
         match (region, unsafe_bios_read) {
             (
-                (MemoryRegion::CartridgeSram
-                | MemoryRegion::CartridgeUpper
-                | MemoryRegion::Illegal),
+                MemoryRegion::CartridgeSram | MemoryRegion::CartridgeUpper | MemoryRegion::Illegal,
                 _,
             ) => false,
             (MemoryRegion::Bios, false) => false,
@@ -1113,7 +1111,7 @@ impl Bus {
                 }
                 ((addr & 0x3ff), MemoryRegion::Oam)
             }
-            8 | 9 | 10 | 11 => {
+            8..=11 => {
                 if !is_read {
                     return (0, MemoryRegion::Illegal);
                 }

@@ -108,7 +108,7 @@ pub struct SoundBufferIt<'a> {
     index_inner: usize,
 }
 
-impl<'a> Iterator for SoundBufferIt<'a> {
+impl Iterator for SoundBufferIt<'_> {
     type Item = (f32, f32);
     fn next(&mut self) -> Option<(f32, f32)> {
         if self.index_outer == self.data.len() {
@@ -127,7 +127,7 @@ impl<'a> Iterator for SoundBufferIt<'a> {
     }
 }
 
-impl<'a> SoundBufferIt<'a> {
+impl SoundBufferIt<'_> {
     pub fn len(&self) -> usize {
         self.data.iter().map(|x| x.len()).sum()
     }
