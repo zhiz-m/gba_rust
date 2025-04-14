@@ -175,42 +175,6 @@ function pollGamepad() {
     }
 }
 
-// Initialize the input handlers
-// function initKeyInput() {
-//     window.addEventListener("keydown", (e) => {
-//         handleKey(e.key, true);
-//         if (e.key == " " && e.target == document.body) {
-//             e.preventDefault();
-//         }
-//     });
-//     window.addEventListener("keyup", (e) => handleKey(e.key, false));
-// }
-
-// function handleKey(key, is_pressed) {
-//     let num = null;
-//     if (key == "z") num = 0;
-//     else if (key == "x") num = 1;
-//     else if (key == "q") num = 2;
-//     else if (key == "w") num = 3;
-//     else if (key == "ArrowRight") num = 4;
-//     else if (key == "ArrowLeft") num = 5;
-//     else if (key == "ArrowUp") num = 6;
-//     else if (key == "ArrowDown") num = 7;
-//     else if (key == "s") num = 8;
-//     else if (key == "a") num = 9;
-//     else if (key == " ") num = 10;
-//     else if (key == "1") num = 11;
-//     else if (key == "2") num = 12;
-//     else if (key == "3") num = 13;
-//     else if (key == "4") num = 14;
-//     else if (key == "5") num = 15;
-//     else return;
-
-//     // console.log(`key press: ${key}, ${num}, ${is_pressed}`);
-
-//     if (keys) keys.push([num, is_pressed]);
-// }
-
 function modifyFpsLabel(fps) {
     if (fps != null) fps_label.innerHTML = `FPS: ${fps}`
 }

@@ -51,12 +51,8 @@ impl StereoTuple {
         }
     }*/
     pub fn clip(&mut self) {
-        self.0 = self
-            .0
-            .map(|val| std::cmp::max(0, std::cmp::min(0x3ff, val)));
-        self.1 = self
-            .1
-            .map(|val| std::cmp::max(0, std::cmp::min(0x3ff, val)));
+        self.0 = self.0.map(|val| val.clamp(0, 0x3ff));
+        self.1 = self.1.map(|val| val.clamp(0, 0x3ff));
     }
 }
 
@@ -208,8 +204,8 @@ impl Apu {
             direct_sound_fifo_cur: [0; 2],
             direct_sound_timer: [None; 2],
 
-            sound_in_buff: sampler.input_buffer_allocate(),
-            sound_out_buff: vec![sampler.output_buffer_allocate(); sound_out_buff_extern_size],
+            sound_in_buff: sampler.input_buffer_allocate(true),
+            sound_out_buff: vec![sampler.output_buffer_allocate(true); sound_out_buff_extern_size],
             sound_out_buff_index: 0,
             sampler,
 

@@ -7,7 +7,7 @@ pub enum TimingMode {
     Immediate,
     VBlank,
     HBlank,
-    FIFO,
+    Fifo,
 }
 
 #[derive(Clone)]
@@ -62,11 +62,11 @@ impl DMA_Channel {
                 assert!(dest_addr == 0x040000a0 || dest_addr == 0x040000a4);
                 //println!("dma fifo addr: {:#x}", src_addr)
                 num_transfers = 4;
-                TimingMode::FIFO
+                TimingMode::Fifo
             }
             _ => unreachable!(),
         };
-        if timing_mode == TimingMode::FIFO {
+        if timing_mode == TimingMode::Fifo {
             //println!("dma channel {}, src_addr: {:#x}, dest addr: {:#x}, num_transfers: {:#x}", channel_no, src_addr, dest_addr, dma_cnt as u16);
         }
         //assert!(!is_enabled || dma_cnt as u16 > 0);
@@ -102,13 +102,13 @@ impl DMA_Channel {
                     TimingMode::Immediate => true,
                     TimingMode::HBlank => bus.hblank_dma,
                     TimingMode::VBlank => bus.vblank_dma,
-                    TimingMode::FIFO => {
+                    TimingMode::Fifo => {
                         match self.channel_no {
                             0 => {
-                                println!("FIFO channel is invalid for DMA channel_no of 0");
+                                println!("Fifo channel is invalid for DMA channel_no of 0");
                                 false
                             }
-                            // sound FIFO mode
+                            // sound Fifo mode
                             1 | 2 => {
                                 bus.apu.direct_sound_fifo
                                     [(self.dest_addr as usize - 0x040000a0) >> 2]
@@ -143,7 +143,7 @@ impl DMA_Channel {
         if self.is_repeating {
             // if this is a repeat run, need to re-load the number of transfers
             self.num_transfers = match self.timing_mode {
-                TimingMode::FIFO => 4,
+                TimingMode::Fifo => 4,
                 _ => dma_cnt as u16,
             };
             if self.repeat_reset_dest {
@@ -155,7 +155,7 @@ impl DMA_Channel {
         self.repeat_reset_dest = false;
 
         self.dest_increment = match self.timing_mode {
-            TimingMode::FIFO => 0,
+            TimingMode::Fifo => 0,
             _ => match (dma_cnt >> 0x15) & 0b11 {
                 0b00 => 1,
                 0b01 => !0, // -1
@@ -179,7 +179,7 @@ impl DMA_Channel {
             _ => unreachable!(),
         };
 
-        if self.timing_mode != TimingMode::FIFO {
+        if self.timing_mode != TimingMode::Fifo {
             //println!("non-fifo dma dest_addr: {:#x}", self.dest_addr);
             self.chunk_size = match (dma_cnt >> 0x1a) & 1 > 0 {
                 true => ChunkSize::Word,
@@ -196,7 +196,7 @@ impl DMA_Channel {
 
         self.raise_interrupt = (dma_cnt >> 0x1e) & 1 > 0;
 
-        self.is_repeating = self.timing_mode == TimingMode::FIFO
+        self.is_repeating = self.timing_mode == TimingMode::Fifo
             || (self.timing_mode != TimingMode::Immediate && (dma_cnt >> 0x19) & 1 > 0);
 
         if self.channel_no != 1 && self.channel_no != 2 {
@@ -292,10 +292,8 @@ impl DMA_Channel {
                     let mut j = 0;
                     let base_addr = bus.eeprom_read_offset;
                     //println!("read base addr: {:#x}", base_addr);
-                    let res = bus.read_word_raw(base_addr, MemoryRegion::CartridgeSram)
-                        as u64
-                        + ((bus.read_word_raw(base_addr + 4, MemoryRegion::CartridgeSram)
-                            as u64)
+                    let res = bus.read_word_raw(base_addr, MemoryRegion::CartridgeSram) as u64
+                        + ((bus.read_word_raw(base_addr + 4, MemoryRegion::CartridgeSram) as u64)
                             << 32);
                     //println!("read res: {:#18x}", res);
                     for i in 0..self.num_transfers {
@@ -317,7 +315,7 @@ impl DMA_Channel {
             } else {
                 println!("fatal error: eeprom DMA 3 has invalid config. chunksize: {}, src_inc: {}, dest_inc: {}", self.chunk_size as u32, self.src_increment as i32, self.dest_increment as i32);
             }
-        } else if self.timing_mode != TimingMode::FIFO {
+        } else if self.timing_mode != TimingMode::Fifo {
             for _ in 0..self.num_transfers {
                 //println!("dest: {:#x}, src: {:#x}, data: {:#010x}", self.dest_addr, self.src_addr, bus.read_word(self.src_addr));
                 match self.chunk_size {

@@ -287,14 +287,21 @@ impl Bus {
 
     #[inline(always)]
     fn can_do_fast_internal_read(region: MemoryRegion, unsafe_bios_read: bool) -> bool {
-        match (region, unsafe_bios_read) {
+        !matches!(
+            (region, unsafe_bios_read),
             (
                 MemoryRegion::CartridgeSram | MemoryRegion::CartridgeUpper | MemoryRegion::Illegal,
                 _,
-            ) => false,
-            (MemoryRegion::Bios, false) => false,
-            _ => true,
-        }
+            ) | (MemoryRegion::Bios, false)
+        )
+        // match (region, unsafe_bios_read) {
+        //     (
+        //         MemoryRegion::CartridgeSram | MemoryRegion::CartridgeUpper | MemoryRegion::Illegal,
+        //         _,
+        //     ) => false,
+        //     (MemoryRegion::Bios, false) => false,
+        //     _ => true,
+        // }
     }
 
     #[inline(always)]
@@ -656,7 +663,7 @@ impl Bus {
         }
     }
 
-    #[inline(always)]
+    // #[inline(always)]
     fn internal_write_byte(&mut self, addr: usize, region: MemoryRegion, val: u8) {
         match region {
             MemoryRegion::IO => {

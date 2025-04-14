@@ -12,7 +12,7 @@ use crate::{
 #[derive(Clone, Copy)]
 enum Workflow {
     Timer = 0,
-    DMA = 1,
+    Dma = 1,
     Cpu = 2,
     Apu = 3,
     Ppu = 4,
@@ -73,7 +73,7 @@ impl GBA {
 
             workflow_times: [
                 (0, Workflow::Timer),
-                (0, Workflow::DMA),
+                (0, Workflow::Dma),
                 (0, Workflow::Cpu),
                 (0, Workflow::Apu),
                 (0, Workflow::Ppu),
@@ -164,7 +164,7 @@ impl GBA {
                     self.bus.timer_clock();
                     self.workflow_times[0].0 += config::TIMER_CLOCK_INTERVAL_CLOCKS;
                 }
-                Workflow::DMA => {
+                Workflow::Dma => {
                     // let res = self.bus.dma_clock();
                     // self.workflow_times[1].0 += res;
                     self.workflow_times[1].0 += config::DMA_CHECK_INTERVAL_CLOCKS
