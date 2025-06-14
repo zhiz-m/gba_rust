@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
+
+# adapted from https://github.com/rustwasm/wasm-bindgen/blob/main/examples/raytrace-parallel/build.py
+
 import os
 import subprocess
 
 root_dir = os.path.dirname(__file__)
 
-# A couple of steps are necessary to get this build working which makes it slightly
-# nonstandard compared to most other builds.
-#
-# * First, the Rust standard library needs to be recompiled with atomics
-#   enabled. to do that we use Cargo's unstable `-Zbuild-std` feature.
-#
-# * Next we need to compile everything with the `atomics` and `bulk-memory`
-#   features enabled, ensuring that LLVM will generate atomic instructions,
-#   shared memory, passive segments, etc.
-
-# os.environ.update(
-#     {"RUSTFLAGS": "-C target-feature=+bulk-memory,+mutable-globals"}
-# )
+os.environ.update(
+    {"RUSTFLAGS": "-C target-feature=+simd128"}
+)
 
 print("now: rustc compilation")
 
@@ -26,7 +19,8 @@ subprocess.run(
         "build",
         "--release",
         "--target",
-        "wasm32-unknown-unknown"
+        "wasm32-unknown-unknown",
+        "-Zbuild-std=std,panic_abort",
     ],
     cwd=root_dir,
 ).check_returncode()
@@ -63,6 +57,7 @@ subprocess.run(
         "--enable-bulk-memory",
         "--enable-reference-types",
         os.path.join(root_dir, "pkg", "gba_rust_wasm_bg.wasm"),
+        "--debuginfo",
         "-O4",
         "-o",
         os.path.join(root_dir, "pkg", "gba_rust_wasm_bg.wasm"),

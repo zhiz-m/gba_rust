@@ -183,11 +183,7 @@ impl GBA {
 
                         //info!("arm count: {}, thumb count: {}", self.bus.cpu.arm_cnt, self.bus.cpu.thumb_cnt);
 
-                        return Ok(if self.last_finished_time > current_time {
-                            self.last_finished_time - current_time
-                        } else {
-                            0
-                        });
+                        return Ok(self.last_finished_time.saturating_sub(current_time));
                     }
                 }
                 Workflow::Normaliser => {

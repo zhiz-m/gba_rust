@@ -243,10 +243,7 @@ impl DMA_Channel {
                                 bus.eeprom_is_read = true;
                                 //println!("eeprom read set addr");
                             } else {
-                                println!(
-                                    "DMA channel 3 EEPROM no matching bits, res: {:#05b}",
-                                    res
-                                );
+                                println!("DMA channel 3 EEPROM no matching bits, res: {res:#05b}");
                                 break;
                             }
                             j = 0;

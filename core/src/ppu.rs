@@ -565,10 +565,7 @@ impl Ppu {
             (0b10, true) => (512, 512),
             (0b11, true) => (1024, 1024),
             _ => {
-                warn!(
-                    "invalid sz_flag for tiled bg dimensions: {}, {}",
-                    sz_flag, is_affine
-                );
+                warn!("invalid sz_flag for tiled bg dimensions: {sz_flag}, {is_affine}");
                 (256, 256)
             }
         }

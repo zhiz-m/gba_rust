@@ -204,8 +204,8 @@ impl Apu {
             direct_sound_fifo_cur: [0; 2],
             direct_sound_timer: [None; 2],
 
-            sound_in_buff: sampler.input_buffer_allocate(true),
-            sound_out_buff: vec![sampler.output_buffer_allocate(true); sound_out_buff_extern_size],
+            sound_in_buff: sampler.input_buffer_allocate(),
+            sound_out_buff: vec![sampler.output_buffer_allocate(); sound_out_buff_extern_size],
             sound_out_buff_index: 0,
             sampler,
 

@@ -116,7 +116,7 @@ impl InputHandler {
         }
     }
 
-    // CR-someday zhizma: use the below, decouple saves/speedup from keys
+    // todo: use the below, decouple saves/speedup from keys
     #[inline(always)]
     pub fn process_speedup(&mut self, enable: bool) {
         self.cur_speedup_state = enable

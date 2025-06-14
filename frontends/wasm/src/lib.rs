@@ -1,3 +1,4 @@
+// #![cfg(target_feature = "simd128")]
 use std::convert::TryInto;
 
 use gba_core::{marshall_save_state, KeyInput, GBA};
