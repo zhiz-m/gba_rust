@@ -366,6 +366,7 @@ impl Bus {
         }
     }
 
+    #[inline(always)]
     pub fn read_word_unsafe_bios_read(&mut self, addr: usize) -> u32 {
         let (addr, region) = self.addr_match(addr, ChunkSize::Word, true);
         assert!(addr & 0b11 == 0);
@@ -825,8 +826,8 @@ impl Bus {
                                 //self.apu.direct_sound_fifo[channel_num].pop_back();
                                 //self.apu.direct_sound_fifo[channel_num].push_back(val as i8);
                                 warn!(
-                                    "sound fifo: {}, attempt to add sample at 32 capacity",
-                                    channel_num
+                                    "sound fifo: {channel_num}, attempt to add sample at 32 capacity",
+                                    
                                 );
                             }
                             // do not write to mem directly

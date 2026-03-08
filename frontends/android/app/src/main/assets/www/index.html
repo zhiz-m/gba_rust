@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GBA Emulator</title>
+    <link rel="stylesheet" href="style.css">
+    <base href="https://appassets.androidplatform.net/assets/www/" />
+    <script src='pkg/gba_rust_wasm.js'></script>
+</head>
+
+<body>
+    <div class="container">
+        <canvas id="gba_rust_canvas"></canvas>
+
+        <!-- Touch controls overlay -->
+        <div class="touch-overlay">
+            <!-- D-pad -->
+            <div class="dpad">
+                <button class="dpad-btn up" data-key="6">▲</button>
+                <div class="dpad-middle">
+                    <button class="dpad-btn left" data-key="5">◀</button>
+                    <button class="dpad-btn right" data-key="4">▶</button>
+                </div>
+                <button class="dpad-btn down" data-key="7">▼</button>
+            </div>
+
+            <!-- A/B buttons -->
+            <div class="ab-buttons">
+                <button class="action-btn a" data-key="0">A</button>
+                <button class="action-btn b" data-key="1">B</button>
+            </div>
+
+            <!-- L and R -->
+            <button class="l-button" data-key="9">L</button>
+            <button class="r-button" data-key="8">R</button>
+
+            <!-- Start and Select -->
+            <button class="start-button" data-key="3">Start</button>
+            <button class="select-button" data-key="2">Select</button>
+            <button class="toggle-button" id="space-toggle">⏯</button>
+
+            <!-- Menu button -->
+            <button class="menu-button">☰</button>
+        </div>
+
+        <!-- Menu dialog (hidden by default) -->
+        <div class="menu-dialog hidden">
+            <div class="dialog-content">
+                <h3>Menu</h3>
+                <input type="file" id="bios_input" accept=".bin,.gba" style="display:none">
+                <input type="file" id="rom_input" accept=".gba" style="display:none">
+                <input type="file" id="save_state_input" accept=".sav,.rustsav" style="display:none">
+
+                <button id="load_bios_button">Load BIOS</button>
+                <button id="load_rom_button">Load ROM</button>
+                <button id="load_save_button">Load Save</button>
+                <button id="reset_button">Reset</button>
+                <button id="download_save_button">Download Save</button>
+
+                <label>Slot:
+                    <select id="save_slot">
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                    </select>
+                </label>
+
+                <button id="commit_save_button">Commit Save to Slot</button>
+
+                <button class="close-dialog">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Optional small FPS display -->
+    <div id="fps_label" class="fps">FPS: 0</div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

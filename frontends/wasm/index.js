@@ -2,7 +2,7 @@ wasm_bindgen().catch(console.error)
 const { GbaWasm } = wasm_bindgen;
 let bios_bin = null;
 let rom_bin = null;
-let save_bin = null;
+let save_bin_from_disk = null;
 let rom_name = null;
 let gba = null;
 let has_init = false;
@@ -16,54 +16,89 @@ let audio_offset = null;
 
 let keys = null;
 
+// NEW: flag to track if a save key (1-5) was pressed during this frame
+let save_key_pressed_this_frame = false;
+
+// Helper functions for localStorage
+function arrayToBase64(uint8Array) {
+    let binary = '';
+    const len = uint8Array.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(uint8Array[i]);
+    }
+    return btoa(binary);
+}
+
+function base64ToArray(base64) {
+    const binary = atob(base64);
+    const len = binary.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+}
+
+function saveToLocalStorage(rom_name, data) {
+    if (!rom_name) return;
+    try {
+        const base64 = arrayToBase64(data);
+        localStorage.setItem(`gba_save_${rom_name}`, base64);
+        console.log(`Saved to localStorage for ${rom_name}`);
+    } catch (e) {
+        console.error('Failed to save to localStorage', e);
+    }
+}
+
+function loadFromLocalStorage(rom_name) {
+    if (!rom_name) return null;
+    const base64 = localStorage.getItem(`gba_save_${rom_name}`);
+    if (base64) {
+        try {
+            console.log(`Loaded from localStorage for ${rom_name}`);
+            return base64ToArray(base64);
+        } catch (e) {
+            console.error('Failed to parse save from localStorage', e);
+        }
+    }
+    return null;
+}
+
 configureFileInput("bios_input", (data) => { bios_bin = data; console.log("bios loaded") });
 configureRomFileInput("rom_input", (data) => { rom_bin = data; console.log("rom loaded") });
-configureFileInput("save_state_input", (data) => { save_bin = data; console.log("save loaded") });
+configureFileInput("save_state_input", (data) => { save_bin_from_disk = data; console.log("save loaded") });
 initCanvas();
 initResetButton();
 initKeyInput();
 initDownloadSaveButton();
-// initSelectSaveSlotDropdown();
 
 function downloadFile() {
     if (!rom_name || !gba || !has_init) return;
 
     let binaryData = gba.get_save_state();
 
-    // Create a Blob object from the binary data
+
     const blob = new Blob([binaryData], { type: 'application/octet-stream' });
-
-    // Create a URL for the Blob
     const blobUrl = URL.createObjectURL(blob);
-
-    // Create a link element
     const downloadLink = document.createElement('a');
     downloadLink.href = blobUrl;
-
-    // Specify the filename for the downloaded file
-    downloadLink.download = rom_name + `-${Date.now()}` + ".rustsav"; // Change to your desired filename and extension
-
-    // Trigger a click event on the link to initiate the download
+    downloadLink.download = rom_name + `-${Date.now()}` + ".rustsav";
     downloadLink.click();
-
-    // Clean up by revoking the Blob URL (optional, but recommended)
     URL.revokeObjectURL(blobUrl);
 }
 
 function getSaveSlot() {
     let value = document.getElementById("save_slot").value;
-    return parseInt(value);
+    return parseInt(value) - 1;
 }
 
 function initDownloadSaveButton() {
     document.getElementById("download_save_button").addEventListener("click", () => {
         downloadFile();
-    });;
-
+    });
 }
 
 function initKeyInput() {
-    // Initialize keyboard input
     window.addEventListener("keydown", (e) => {
         handleKey(e.key, true, "keyboard");
         if (e.key == " " && e.target == document.body) {
@@ -72,24 +107,14 @@ function initKeyInput() {
     });
     window.addEventListener("keyup", (e) => handleKey(e.key, false, "keyboard"));
 }
-
-// let keyState = {}
-
 // todo: add input source disambiguation
 function handleKey(key, is_pressed, source) {
-    // console.log("handlekey", key, is_pressed);
     let num = mapKeyToNum(key);
     if (num === null) return;
-    // if (keyState[key] !== null && keyState[key] === is_pressed) return;
-    // if (keys && keyState[key] !== true) {
 
-    // keys[num] == true means that we've set it to true during this frame. attempting to unset it is 
-    // probably due to double input from both a controller and keyboard, so we ignore it.
     if (keys) {
         if (!keys[num] || (keys[num][0] === "keyboard" || keys[num][1] !== true)) {
-            // keyState[key] = is_pressed;
             keys[num] = [source, is_pressed];
-            // console.log(key, source, is_pressed, keys[num])
         }
     }
 }
@@ -114,8 +139,6 @@ function mapKeyToNum(key) {
     return null;
 }
 
-
-// Map gamepad buttons to key equivalents
 function mapGamepadButtonToKey(buttonIndex) {
     const mapping = {
         0: "z",        // Cross
@@ -131,45 +154,38 @@ function mapGamepadButtonToKey(buttonIndex) {
         4: "a",        // L1
         7: " ",        // R2
         5: "s",        // R1
-        8: "w",        // Share
-        9: "q",        // Options
+        8: "q",        // Share
+        9: "w",        // Options
     };
     return mapping[buttonIndex] || null;
 }
 
 let gamepadLoop = null;
-
 function pollGamepad() {
     const handle = (a, b) => handleKey(a, b, "controller")
     const gamepads = navigator.getGamepads();
     for (let i = 0; i < gamepads.length; i++) {
         const gamepad = gamepads[i];
         if (!gamepad) continue;
-
         gamepad.buttons.forEach((button, index) => {
             const key = mapGamepadButtonToKey(index);
             if (key) {
                 handle(key, button.pressed);
             }
         });
-
         gamepad.axes.forEach((axis, index) => {
             if (index === 0) {
                 // Left stick horizontal
                 if (axis < -0.5) handle("ArrowLeft", true);
                 else handle("ArrowLeft", false);
                 if (axis > 0.5) handle("ArrowRight", true);
-                else {
-                    handle("ArrowRight", false);
-                }
+                else handle("ArrowRight", false);
             } else if (index === 1) {
                 // Left stick vertical
                 if (axis < -0.5) handle("ArrowUp", true);
                 else handle("ArrowUp", false);
                 if (axis > 0.5) handle("ArrowDown", true);
-                else {
-                    handle("ArrowDown", false);
-                }
+                else handle("ArrowDown", false);
             }
         });
     }
@@ -182,12 +198,14 @@ function modifyFpsLabel(fps) {
 function initResetButton() {
     document.getElementById("reset_button").addEventListener("click", () => {
         if (bios_bin != null && rom_bin != null) {
+            save_bin = save_bin_from_disk
+            if (save_bin === null && rom_name) {
+                save_bin = loadFromLocalStorage(rom_name);
+            }
             if (last_scheduled != null) clearTimeout(last_scheduled);
-
             audio_ctx = new (window.AudioContext || window.webkitAudioContext)();
             gba = new GbaWasm(bios_bin, rom_bin, save_bin, getSaveSlot(), audio_ctx.sampleRate);
             has_init = false;
-
             scheduleGba(BigInt(0));
             console.log("GBA scheduled to start / restart");
         }
@@ -230,42 +248,22 @@ function configureRomFileInput(id, callback) {
     });
 }
 
-// NOTE: a lot of the logic for audio playing in JavaScript came from https://github.com/michelhe/rustboyadvance-ng/blob/master/platform/rustboyadvance-wasm/app/index.js
 function playAudio(audio_data) {
     if (audio_data == null || audio_data.length == 0) return;
-
     let cnt = audio_data.length / 2;
-    const buf = audio_ctx.createBuffer(
-        2,
-        cnt,
-        audio_ctx.sampleRate
-    );
-
+    const buf = audio_ctx.createBuffer(2, cnt, audio_ctx.sampleRate);
     for (let channel = 0; channel < 2; channel++) {
         let buffering = buf.getChannelData(channel);
         for (let i = 0; i < cnt; i++) {
-            // audio data frames are interleaved
             buffering[i] = audio_data[i * 2 + channel];
         }
     }
-
-    // const newaudioBuffer = (src && src.buffer)
-    //     ? appendBuffer(source.buffer, audioBufferChunk, audioContext)
-    //     : audioBufferChunk;
-
     let src = audio_ctx.createBufferSource();
-
-
-
     src.buffer = buf;
-
     src.connect(audio_ctx.destination);
     src.start(audio_offset);
     audio_offset += audio_data.length / 2 / audio_ctx.sampleRate;
-
     audio_offset = Math.max(audio_offset, audio_ctx.currentTime + 0.05);
-    // console.log(`audiocontext time: ${audio_ctx.currentTime}\n`);
-    // console.log(`offset: ${audio_offset}\n`);
 }
 
 function scheduleGba(time_micros) {
@@ -277,6 +275,7 @@ function scheduleGba(time_micros) {
                 gba.init(time);
                 has_init = true;
                 keys = {}
+                save_key_pressed_this_frame = false; // ensure fresh start
             }
             let micros = gba.process_frame(time);
 
@@ -291,9 +290,21 @@ function scheduleGba(time_micros) {
 
             gba.input_frame_preprocess();
 
+            // if a save key was pressed this frame, fetch and store the save state, must be done before [gba.key_input()]
+            if (save_key_pressed_this_frame && rom_name) {
+                let saveData = gba.get_save_state();
+                saveToLocalStorage(rom_name, saveData);
+                save_key_pressed_this_frame = false; // reset flag
+            }
+
             pollGamepad();
+
+            // Send key inputs to the emulator
             for (const key in keys) {
-                // console.log(`key send ${keys[i][0]} ${keys[i][1]}`);
+                // MODIFIED: if a save key (1-5) is pressed, set the flag (ignoring releases)
+                if (key >= 11 && key <= 15 && keys[key][1]) {
+                    save_key_pressed_this_frame = true;
+                }
                 gba.key_input(key, keys[key][1]);
             }
 
@@ -305,5 +316,3 @@ function scheduleGba(time_micros) {
 
     last_scheduled = setTimeout(closure, Number(time_micros / BigInt(1000)));
 }
-
-
